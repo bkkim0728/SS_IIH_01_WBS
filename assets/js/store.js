@@ -62,14 +62,59 @@ function authHeaders(key){
 }
 
 /* --- Supabase REST 호출 ------------------------------------------- */
+/* 원인을 추측해 알려주되, 실제 응답을 절대 감추지 않는다.
+   추측이 틀렸을 때 엉뚱한 곳을 파게 만드는 것이 가장 나쁘다. */
 function explain(status, body, base){
+  let hint = '';
   if (body.includes('PGRST125'))
-    return `경로 오류. Project URL 은 ${base} 형태여야 합니다. 뒤에 /rest/v1 이나 슬래시를 붙이지 마세요.`;
-  if (body.includes('PGRST205') || body.includes('PGRST106'))
-    return 'DB 는 붙었지만 테이블이 없습니다. schema.sql 과 seed.sql 을 먼저 실행하세요.';
-  if (status === 401 || body.includes('PGRST301'))
-    return '키가 거부됐습니다. Publishable 또는 anon 키가 맞는지 확인하세요.';
-  return `${status} ${body.slice(0,140)}`;
+    hint = `Project URL 은 ${base} 형태여야 합니다.`;
+  else if (body.includes('PGRST205') || body.includes('PGRST106'))
+    hint = 'schema.sql 과 seed.sql 을 먼저 실행하세요.';
+  else if (body.includes('42501') || /row-level security|permission denied/i.test(body))
+    hint = 'DB 쓰기 권한이 막혔습니다. supabase/fix-write-permission.sql 을 실행하세요.';
+  else if (body.includes('task_log'))
+    hint = '변경이력 트리거가 막혔습니다. supabase/fix-write-permission.sql 을 실행하세요.';
+  else if (status === 401 || status === 403)
+    hint = '키 또는 권한 문제입니다. 설정 화면의 [쓰기 테스트] 를 눌러 원문을 확인하세요.';
+  const raw = `${status} ${body.replace(/\s+/g,' ').slice(0,150)}`;
+  return hint ? `${hint}  (${raw})` : raw;
+}
+
+/* 실제로 한 건을 썼다가 되돌려 본다. 원문 응답을 그대로 돌려준다. */
+export async function writeSelfTest(){
+  const c = getConfig();
+  if (!c) return { ok:false, step:'설정', detail:'Supabase 가 설정되지 않았습니다.' };
+  const t = state.tasks.find(x => x.level === 4);
+  if (!t) return { ok:false, step:'대상', detail:'L4 Task 가 없습니다.' };
+
+  const url = `${c.url}/rest/v1/tasks?code=eq.${encodeURIComponent(t.code)}`;
+  const headers = { ...authHeaders(c.key), 'Content-Type':'application/json', Prefer:'return=representation' };
+
+  const attempt = async (value) => {
+    const res = await fetch(url, { method:'PATCH', headers, body: JSON.stringify({ progress: value }) });
+    const text = await res.text();
+    return { status: res.status, ok: res.ok, text };
+  };
+
+  try {
+    const before = t.progress ?? 0;
+    const probe = before === 42 ? 43 : 42;
+    const r1 = await attempt(probe);
+    if (!r1.ok){
+      return { ok:false, step:'쓰기', code:t.code, status:r1.status,
+               detail: r1.text.replace(/\s+/g,' ').slice(0,300),
+               headers: Object.keys(headers).join(', ') };
+    }
+    if (r1.text.trim() === '[]'){
+      return { ok:false, step:'쓰기', code:t.code, status:r1.status,
+               detail:'응답이 빈 배열입니다. RLS 의 UPDATE 정책이 이 행을 가리고 있습니다. fix-write-permission.sql 을 실행하세요.',
+               headers: Object.keys(headers).join(', ') };
+    }
+    await attempt(before);
+    return { ok:true, step:'쓰기', code:t.code, status:r1.status, detail:'쓰고 되돌리기까지 성공했습니다.' };
+  } catch (e){
+    return { ok:false, step:'요청', detail:e.message };
+  }
 }
 
 async function sb(path, opts = {}){
@@ -196,7 +241,9 @@ export async function updateTask(code, patch){
         method: 'PATCH',
         body: JSON.stringify({
           progress: t.progress, status: t.status,
-          owner: t.owner, plan_start: t.start, plan_end: t.end
+          owner: t.owner || '',
+          plan_start: t.start || null,      // 빈 문자열은 date 컬럼이 거부한다
+          plan_end:   t.end   || null
         })
       });
     } catch (e){
@@ -233,4 +280,115 @@ export async function fetchLog(){
 export function resetLocal(){
   localStorage.removeItem(DATA_KEY);
   localStorage.removeItem(LOG_KEY);
+}
+
+/* ==================================================================
+   엑셀 반영 — 여러 건을 한 번에 처리한다.
+   Supabase 모드에서는 실패 시 화면 상태를 되돌린다.
+   ================================================================== */
+export async function applyBulk({ updates = [], adds = [], removes = [] }){
+  const snapshot = JSON.parse(JSON.stringify(state.tasks));
+  const result = { updated: 0, added: 0, removed: 0 };
+
+  try {
+    // 1) 수정
+    for (const u of updates){
+      const t = state.tasks.find(x => x.code === u.code);
+      if (!t) continue;
+      for (const c of u.changes) t[c.field] = c.raw !== undefined ? c.raw : c.to;
+      if (t.level === 4){
+        if (t.progress >= 100 && t.status !== 'blocked') t.status = 'done';
+        if (t.status === 'done') t.progress = 100;
+        if (t.status === 'not_started') t.progress = 0;
+      }
+      result.updated++;
+    }
+
+    // 2) 추가 — WBS 코드 순으로 제자리에 꽂는다
+    for (const a of adds){
+      if (state.tasks.some(x => x.code === a.code)) continue;
+      state.tasks.push({ ...a });
+      result.added++;
+    }
+    if (result.added) state.tasks.sort((x, y) => cmpCode(x.code, y.code));
+
+    // 3) 삭제 — 자식이 있으면 함께 지운다
+    if (removes.length){
+      const kill = new Set();
+      for (const r of removes){
+        kill.add(r.code);
+        state.tasks.forEach(t => { if (t.code.startsWith(r.code + '.')) kill.add(t.code); });
+      }
+      state.tasks = state.tasks.filter(t => !kill.has(t.code));
+      result.removed = kill.size;
+    }
+
+    if (state.mode === 'supabase') await pushAll(updates, adds, removes);
+    else {
+      localStorage.setItem(DATA_KEY, JSON.stringify(state.tasks));
+      pushLocalLog({
+        at: new Date().toISOString(), code: '엑셀',
+        name: `수정 ${result.updated} · 추가 ${result.added} · 삭제 ${result.removed}`,
+        fromProgress: 0, toProgress: 0, fromStatus: 'not_started', toStatus: 'in_progress'
+      });
+    }
+    return result;
+  } catch (e){
+    state.tasks = snapshot;                 // 하나라도 실패하면 통째로 되돌린다
+    throw e;
+  }
+}
+
+function cmpCode(a, b){
+  const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++){
+    const d = (pa[i] ?? -1) - (pb[i] ?? -1);
+    if (d) return d;
+  }
+  return 0;
+}
+
+async function pushAll(updates, adds, removes){
+  const projectId = await getProjectId();
+
+  for (const u of updates){
+    const body = {};
+    for (const c of u.changes){
+      const v = c.raw !== undefined ? c.raw : c.to;
+      const col = { start:'plan_start', end:'plan_end' }[c.field] || c.field;
+      body[col] = (col === 'plan_start' || col === 'plan_end') ? (v || null) : v;
+    }
+    const t = state.tasks.find(x => x.code === u.code);
+    if (t && t.level === 4){ body.progress = t.progress; body.status = t.status; }
+    await sb(`tasks?code=eq.${encodeURIComponent(u.code)}`, {
+      method:'PATCH', body: JSON.stringify(body)
+    });
+  }
+
+  if (adds.length){
+    await sb('tasks', {
+      method:'POST',
+      body: JSON.stringify(adds.map(a => ({
+        project_id: projectId, code: a.code, level: a.level,
+        parent_code: a.parent || null, name: a.name,
+        deliverable: a.deliverable, owner: a.owner,
+        plan_start: a.start || null, plan_end: a.end || null,
+        days: a.days, progress: a.progress, status: a.status,
+        date_source: 'file', note: ''
+      })))
+    });
+  }
+
+  for (const r of removes){
+    await sb(`tasks?or=(code.eq.${encodeURIComponent(r.code)},code.like.${encodeURIComponent(r.code + '.*')})`,
+             { method:'DELETE' });
+  }
+}
+
+let _projectId = null;
+async function getProjectId(){
+  if (_projectId) return _projectId;
+  const rows = await sb(`projects?code=eq.${encodeURIComponent(PROJECT.code)}&select=id`);
+  _projectId = rows && rows[0] ? rows[0].id : null;
+  return _projectId;
 }

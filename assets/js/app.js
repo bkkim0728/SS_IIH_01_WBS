@@ -2,6 +2,7 @@
    app.js — 화면
    ================================================================== */
 import * as store from './store.js';
+import * as excel from './excel.js';
 import { state } from './store.js';
 
 /* ---------- 유틭 ---------- */
@@ -30,7 +31,9 @@ const ICON = {
   cog:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
   search:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
   down:'<path d="M12 3v13M6 12l6 6 6-6M4 21h16"/>',
-  chev:'<path d="M9 6l6 6-6 6"/>'
+  chev:'<path d="M9 6l6 6-6 6"/>',
+  up:'<path d="M12 21V8M6 12l6-6 6 6M4 3h16"/>',
+  sheet:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/>'
 };
 const svg = (d, w = 18) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
@@ -266,7 +269,10 @@ function viewTree(){
       <option value="2" ${filter.level==='2'?'selected':''}>L2 까지</option>
     </select>
     <div class="spacer" style="flex:1"></div>
-    <button class="btn" id="exportCsv">${svg(ICON.down,14)} CSV 내려받기</button>
+    <button class="btn" id="exportXlsx">${svg(ICON.down,14)} 엑셀 내려받기</button>
+    <button class="btn primary" id="importXlsx">${svg(ICON.up,14)} 엑셀 올리기</button>
+    <button class="btn ghost" id="exportCsv">CSV</button>
+    <input type="file" id="xlsxFile" accept=".xlsx,.xls" hidden>
   </div>
 
   <div class="tree">
@@ -533,14 +539,23 @@ function viewSettings(){
         <h3>진단</h3>
         <div class="hint" style="margin-bottom:8px">배포가 제대로 반영됐는지 확인합니다.</div>
         <div id="diag" class="mono" style="font-size:11.5px;line-height:1.9">확인 중…</div>
+        <div style="margin-top:12px;display:flex;gap:9px;align-items:center;flex-wrap:wrap">
+          <button class="btn" id="writeTest">쓰기 테스트</button>
+          <span class="hint">한 건을 썼다가 곧바로 되돌립니다.</span>
+        </div>
+        <div id="writeOut" style="margin-top:10px"></div>
       </div>
 
       <div class="card">
         <h3>데이터 내보내기</h3>
         <div class="hint" style="margin-bottom:12px">현재 진척이 반영된 상태로 저장됩니다.</div>
         <div style="display:flex;gap:9px;flex-wrap:wrap">
+          <button class="btn" id="expXlsx">${svg(ICON.sheet,14)} 엑셀</button>
           <button class="btn" id="expCsv">${svg(ICON.down,14)} CSV</button>
           <button class="btn" id="expJson">${svg(ICON.down,14)} JSON</button>
+        </div>
+        <div class="hint" style="margin-top:10px">
+          엑셀은 고쳐서 다시 올릴 수 있는 왕복 양식입니다. WBS 트리 화면에서 올리세요.
         </div>
       </div>
 
@@ -577,6 +592,137 @@ function exportJson(){
     JSON.stringify({ project:state.project, milestones:state.milestones, tasks:state.tasks }, null, 2),
     'application/json');
   toast('JSON 을 내려받았습니다.');
+}
+
+
+/* ==================================================================
+   엑셀 왕복
+   ================================================================== */
+function exportXlsx(){
+  if (typeof XLSX === 'undefined') return toast('엑셀 모듈을 불러오지 못했습니다.', true);
+  const wb = excel.buildWorkbook(state.tasks, state.project, progressOf);
+  excel.downloadWorkbook(wb,
+    `WBS_${state.project.code}_${new Date().toISOString().slice(0,10)}.xlsx`);
+  toast('엑셀을 내려받았습니다. 고친 뒤 [엑셀 올리기] 로 넣으세요.');
+}
+
+let pending = null;   // 미리보기에서 확인 대기 중인 변경분
+
+async function handleFile(file){
+  if (typeof XLSX === 'undefined') return toast('엑셀 모듈을 불러오지 못했습니다.', true);
+  try {
+    const { rows, sheetName } = await excel.readWorkbook(file);
+    const d = excel.diff(rows, state.tasks);
+    pending = { ...d, fileName: file.name, sheetName, rowCount: rows.length };
+    openPreview();
+  } catch (e){
+    toast('읽기 실패: ' + e.message, true);
+  }
+}
+
+function openPreview(){
+  const d = pending;
+  const total = d.updates.length + d.adds.length;
+  const chip = (n, label, cls) =>
+    `<span class="badge ${n ? cls : ''}" style="font-size:12px;padding:5px 10px">${label} ${n}</span>`;
+
+  const changeLine = c =>
+    `<span class="mono" style="font-size:11px">${esc(c.label)}</span>
+     <span style="color:var(--muted)"> ${esc(String(c.from ?? '')) || '(없음)'}</span>
+     <span style="color:var(--muted)"> → </span>
+     <b style="color:var(--signal-2)">${esc(String(c.to ?? '')) || '(비움)'}</b>`;
+
+  const body = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+      ${chip(d.updates.length, '수정', 'b-signal')}
+      ${chip(d.adds.length, '추가', 'b-mint')}
+      ${chip(d.removes.length, '삭제 후보', 'b-amber')}
+      ${chip(d.problems.length, '문제', 'b-rose')}
+    </div>
+
+    ${d.problems.length ? `
+      <div class="note" style="margin-bottom:14px">
+        <b>먼저 확인하세요</b>: 아래 ${d.problems.length}건은 반영되지 않습니다.
+        <ul style="margin:8px 0 0;padding-left:18px">
+          ${d.problems.slice(0,8).map(p =>
+            `<li><span class="mono">${p.row}행 ${esc(p.code)}</span> ${esc(p.msg)}</li>`).join('')}
+          ${d.problems.length > 8 ? `<li>외 ${d.problems.length - 8}건</li>` : ''}
+        </ul>
+      </div>` : ''}
+
+    ${d.updates.length ? `
+      <h4 style="margin:0 0 8px;font-size:13px">수정 ${d.updates.length}건</h4>
+      <div class="chg-list">
+        ${d.updates.slice(0,60).map(u => `
+          <div class="chg">
+            <code>${esc(u.code)}</code>
+            <div>
+              <div style="font-size:12.5px;margin-bottom:3px">${esc(u.name)}</div>
+              ${u.changes.map(c => `<div>${changeLine(c)}</div>`).join('')}
+            </div>
+          </div>`).join('')}
+        ${d.updates.length > 60 ? `<div class="chg" style="color:var(--muted)">외 ${d.updates.length - 60}건</div>` : ''}
+      </div>` : ''}
+
+    ${d.adds.length ? `
+      <h4 style="margin:16px 0 8px;font-size:13px">추가 ${d.adds.length}건</h4>
+      <div class="chg-list">
+        ${d.adds.slice(0,30).map(a => `
+          <div class="chg"><code>${esc(a.code)}</code>
+            <div style="font-size:12.5px">${esc(a.name)}
+              <span class="badge" style="margin-left:6px">L${a.level}</span></div>
+          </div>`).join('')}
+      </div>` : ''}
+
+    ${d.removes.length ? `
+      <h4 style="margin:16px 0 8px;font-size:13px">엑셀에 없는 Task ${d.removes.length}건</h4>
+      <div class="note" style="margin-bottom:10px">
+        엑셀에서 행을 지우셨거나, 일부만 골라 올리신 경우입니다.
+        <b>기본은 그대로 두기</b>이고, 정말 지우려면 아래를 켜세요. 하위 Task 도 함께 지워집니다.
+      </div>
+      <label style="display:flex;gap:9px;align-items:center;font-size:12.5px;cursor:pointer">
+        <input type="checkbox" id="doRemove" style="accent-color:var(--rose)">
+        <span>이 ${d.removes.length}건을 삭제합니다</span>
+      </label>
+      <div class="chg-list" style="margin-top:10px;max-height:150px">
+        ${d.removes.slice(0,30).map(r =>
+          `<div class="chg"><code>${esc(r.code)}</code><div style="font-size:12.5px">${esc(r.name)}</div></div>`).join('')}
+      </div>` : ''}
+
+    ${!total && !d.removes.length ? `
+      <div class="empty"><b>바뀐 내용이 없습니다</b>
+      엑셀 ${d.rowCount}행을 읽었고 ${d.matched}건이 기존 Task 와 일치합니다.</div>` : ''}
+  `;
+
+  $('#modalTitle').textContent = '엑셀 반영 미리보기';
+  $('#modalSub').textContent = `${d.fileName} · ${d.sheetName} 시트 · ${d.rowCount}행`;
+  $('#modalBody').innerHTML = body;
+  $('#modalApply').style.display = (total || d.removes.length) ? '' : 'none';
+  $('#modalApply').textContent = total ? `${total}건 반영` : '삭제만 반영';
+  $('#modal').classList.add('on');
+}
+
+function closePreview(){ $('#modal').classList.remove('on'); pending = null; }
+
+async function applyPending(){
+  if (!pending) return;
+  const wantRemove = $('#doRemove')?.checked;
+  const payload = {
+    updates: pending.updates,
+    adds: pending.adds,
+    removes: wantRemove ? pending.removes : []
+  };
+  const btn = $('#modalApply');
+  btn.disabled = true; btn.textContent = '반영 중…';
+  try {
+    const r = await store.applyBulk(payload);
+    closePreview();
+    await refresh();
+    toast(`반영 완료 — 수정 ${r.updated} · 추가 ${r.added} · 삭제 ${r.removed}`);
+  } catch (e){
+    btn.disabled = false; btn.textContent = '다시 시도';
+    toast('반영 실패: ' + e.message, true);
+  }
 }
 
 /* ---------- 배포 진단 ---------- */
@@ -634,6 +780,29 @@ async function runDiagnostics(){
   }
 
   el.innerHTML = rows.join('');
+}
+
+async function runWriteTest(){
+  const out = $('#writeOut'), btn = $('#writeTest');
+  if (!out) return;
+  btn.disabled = true; btn.textContent = '확인 중…';
+  out.innerHTML = '';
+  try {
+    const r = await store.writeSelfTest();
+    out.innerHTML = `
+      <div class="note" style="border-left-color:${r.ok ? 'var(--mint)' : 'var(--rose)'};
+           background:${r.ok ? 'var(--mint-bg)' : 'var(--rose-bg)'};
+           color:${r.ok ? '#B8EEDA' : '#F5C4CE'}">
+        <b>${r.ok ? '쓰기 성공' : r.step + ' 실패'}</b>
+        ${r.status ? `<span class="mono" style="margin-left:6px">HTTP ${r.status}</span>` : ''}
+        ${r.code ? `<span class="mono" style="margin-left:6px">${esc(r.code)}</span>` : ''}
+        <div style="margin-top:6px;font-size:11.5px;line-height:1.6">${esc(r.detail)}</div>
+        ${r.headers ? `<div class="mono" style="margin-top:6px;font-size:10.5px;opacity:.75">보낸 헤더: ${esc(r.headers)}</div>` : ''}
+      </div>`;
+  } catch (e){
+    out.innerHTML = `<div class="note">확인 실패: ${esc(e.message)}</div>`;
+  }
+  btn.disabled = false; btn.textContent = '쓰기 테스트';
 }
 
 /* ---------- 토스트 ---------- */
@@ -704,6 +873,11 @@ function bind(){
       $('#rows').innerHTML = treeRows();
     }
     if (id === 'exportCsv' || id === 'expCsv') exportCsv();
+    if (id === 'exportXlsx' || id === 'expXlsx') exportXlsx();
+    if (id === 'importXlsx' || id === 'impXlsx') $('#xlsxFile')?.click();
+    if (id === 'writeTest') await runWriteTest();
+    if (id === 'modalClose' || id === 'modalCancel') closePreview();
+    if (id === 'modalApply') await applyPending();
     if (id === 'expJson') exportJson();
     if (id === 'resetLocal'){
       store.resetLocal(); toast('원본 WBS 상태로 되돌렸습니다.');
@@ -737,6 +911,12 @@ function bind(){
 
   document.addEventListener('change', async e => {
     const t = e.target;
+    if (t.id === 'xlsxFile'){
+      const f = t.files && t.files[0];
+      t.value = '';                      // 같은 파일을 다시 골라도 반응하도록
+      if (f) await handleFile(f);
+      return;
+    }
     if (t.id === 'fStatus'){ filter.status = t.value; $('#rows').innerHTML = treeRows(); return; }
     if (t.id === 'fLevel'){ filter.level = t.value; $('#rows').innerHTML = treeRows(); return; }
     if (t.id === 'gDepth'){ ganttDepth = +t.value; await renderView(); return; }
@@ -753,6 +933,7 @@ function bind(){
   });
 
   document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && $('#modal').classList.contains('on')){ closePreview(); return; }
     if (e.key === '/' && document.activeElement.tagName !== 'INPUT'){
       const q = $('#q'); if (q){ e.preventDefault(); q.focus(); }
     }

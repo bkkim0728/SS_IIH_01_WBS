@@ -86,18 +86,23 @@ create table task_log (
 
 create index task_log_task_idx on task_log (task_id, changed_at desc);
 
+-- security definer 가 반드시 필요합니다.
+-- 이게 없으면 트리거가 호출자(anon) 권한으로 돌면서 task_log 의 RLS 에 막히고,
+-- 그 여파로 tasks 의 UPDATE 까지 통째로 실패합니다.
 create or replace function log_task_change() returns trigger as $$
 begin
   if (new.progress is distinct from old.progress)
      or (new.status is distinct from old.status) then
-    insert into task_log (task_id, task_code, from_progress, to_progress,
-                          from_status, to_status)
+    insert into public.task_log (task_id, task_code, from_progress, to_progress,
+                                 from_status, to_status)
     values (new.id, new.code, old.progress, new.progress, old.status, new.status);
   end if;
   new.updated_at := now();
   return new;
 end;
-$$ language plpgsql;
+$$ language plpgsql
+   security definer
+   set search_path = public, pg_temp;
 
 create trigger tasks_change_log
   before update on tasks
@@ -148,6 +153,13 @@ create policy "read all"   on task_log   for select using (true);
 create policy "write all"  on tasks      for update using (true) with check (true);
 create policy "write all"  on milestones for update using (true) with check (true);
 
+-- 엑셀 업로드로 Task 를 추가·삭제하려면 필요합니다.
+create policy "insert tasks" on tasks    for insert with check (true);
+create policy "delete tasks" on tasks    for delete using (true);
+
+-- 트리거가 남기는 로그. security definer 와 별개로 한 겹 더 열어 둡니다.
+create policy "insert log"   on task_log for insert with check (true);
+
 -- --- B안: 로그인한 사람만 수정 (A안 write 정책을 먼저 drop) ----------
 -- drop policy "write all" on tasks;
 -- drop policy "write all" on milestones;
@@ -161,3 +173,20 @@ create policy "write all"  on milestones for update using (true) with check (tru
 -- ---------------------------------------------------------------------
 alter publication supabase_realtime add table tasks;
 alter publication supabase_realtime add table milestones;
+
+-- ---------------------------------------------------------------------
+-- 8. 권한 확인 (Supabase 기본값이 있지만 명시해 둡니다)
+-- ---------------------------------------------------------------------
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on tasks      to anon, authenticated;
+grant select, update                 on milestones to anon, authenticated;
+grant select                         on projects   to anon, authenticated;
+grant select, insert                 on task_log   to anon, authenticated;
+grant usage, select on all sequences in schema public to anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- 9. 설치 확인
+-- ---------------------------------------------------------------------
+-- select level, count(*) from tasks group by level order by level;
+-- select proname, prosecdef from pg_proc where proname = 'log_task_change';
+-- select tablename, policyname, cmd from pg_policies where schemaname='public' order by 1,3;

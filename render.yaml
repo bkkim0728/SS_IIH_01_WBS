@@ -23,9 +23,18 @@ services:
       - path: /*
         name: Referrer-Policy
         value: strict-origin-when-cross-origin
+      # 폰트는 내용이 바뀌지 않으므로 오래 캐시합니다.
       - path: /assets/fonts/*
         name: Cache-Control
         value: public, max-age=31536000, immutable
-      - path: /assets/*
+      # CSS/JS/HTML 은 매번 갱신 여부만 확인합니다.
+      # (바뀐 스타일이 옛 캐시에 가려지는 것을 막습니다. ETag 로 재검증하므로 가볍습니다.)
+      - path: /assets/css/*
         name: Cache-Control
-        value: public, max-age=3600
+        value: no-cache
+      - path: /assets/js/*
+        name: Cache-Control
+        value: no-cache
+      - path: /index.html
+        name: Cache-Control
+        value: no-cache

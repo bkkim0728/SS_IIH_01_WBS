@@ -129,6 +129,35 @@ B안 주석을 해제한 뒤, Supabase **Authentication** 에서 사용자를 �
 
 정적 사이트라 슬립이 없고, main 브랜치에 push하면 자동 재배포됩니다.
 
+### 배포 후 문제가 생길 때
+
+앱의 **설정** 화면 오른쪽 **진단** 카드를 먼저 보세요. 글꼴이 내려왔는지, 지금 보고 있는
+CSS 가 몇 번째 배포인지, Supabase 가 어떤 URL 로 붙고 있는지가 한 줄씩 나옵니다.
+
+**`PGRST125 Invalid path specified in request URL`**
+
+Project URL 모양이 깨진 경우입니다. 아래 둘 중 하나입니다.
+
+| 잘못 넣은 값 | 만들어지는 경로 |
+|---|---|
+| `https://xxx.supabase.co/` (끝 슬래시) | `//rest/v1/...` |
+| `https://xxx.supabase.co/rest/v1` | `/rest/v1/rest/v1/...` |
+
+앱이 이제 두 경우를 모두 자동으로 잘라내지만, Render 환경변수는
+`https://xxx.supabase.co` 형태로 넣는 것이 정확합니다.
+
+**스타일이나 글꼴이 바뀌지 않을 때**
+
+브라우저가 옛 `app.css` 를 붙들고 있는 경우입니다. `render.yaml` 이 이제
+CSS/JS/HTML 에 `no-cache` 를 주고, `build.sh` 가 배포마다 `?v=커밋해시` 를 붙입니다.
+이미 캐시된 브라우저는 한 번만 강력 새로고침 하세요.
+
+- Windows: `Ctrl` + `Shift` + `R`
+- Mac: `Cmd` + `Shift` + `R`
+
+진단 카드에서 **글꼴 파일 경로**가 실패로 나오면 캐시가 아니라 파일이 안 올라간 것입니다.
+`git status` 로 `assets/fonts/*.woff2` 4개가 커밋됐는지 확인하세요.
+
 ### Blueprint 오류가 날 때
 
 **`services[0].plan no such plan free for service type web`**

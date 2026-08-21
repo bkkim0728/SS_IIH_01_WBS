@@ -530,6 +530,12 @@ function viewSettings(){
       </div>
 
       <div class="card">
+        <h3>진단</h3>
+        <div class="hint" style="margin-bottom:8px">배포가 제대로 반영됐는지 확인합니다.</div>
+        <div id="diag" class="mono" style="font-size:11.5px;line-height:1.9">확인 중…</div>
+      </div>
+
+      <div class="card">
         <h3>데이터 내보내기</h3>
         <div class="hint" style="margin-bottom:12px">현재 진척이 반영된 상태로 저장됩니다.</div>
         <div style="display:flex;gap:9px;flex-wrap:wrap">
@@ -573,6 +579,52 @@ function exportJson(){
   toast('JSON 을 내려받았습니다.');
 }
 
+/* ---------- 배포 진단 ---------- */
+async function runDiagnostics(){
+  const el = $('#diag');
+  if (!el) return;
+  const rows = [];
+  // ok: true=정상 / false=문제 / null=해당 없음
+  const mark = (ok, label, detail) => {
+    const cls = ok === null ? '' : ok ? 'b-mint' : 'b-rose';
+    const txt = ok === null ? '—' : ok ? 'OK' : '실패';
+    rows.push(`<div><span class="badge ${cls}" style="min-width:34px;justify-content:center">${txt}</span>
+      <span style="margin-left:7px">${label}</span>
+      <span style="color:var(--muted)"> ${detail}</span></div>`);
+  };
+
+  // 1) 폰트가 실제로 내려왔는지
+  try { await document.fonts.ready; } catch (_) {}
+  const loaded = [...document.fonts].filter(f => f.family === 'Paperlogy' && f.status === 'loaded');
+  mark(loaded.length > 0, '페이퍼로지 글꼴',
+       loaded.length ? `${loaded.length}종 로드됨` : '내려오지 않음 (아래 안내 참고)');
+
+  // 2) 실제로 그려지는 글꼴이 무엇인지
+  const fam = getComputedStyle(document.body).fontFamily.split(',')[0].replace(/['"]/g,'');
+  mark(fam === 'Paperlogy', '본문 적용 글꼴', fam);
+
+  // 3) 폰트 파일에 직접 접근되는지 (경로·MIME 확인)
+  try {
+    const r = await fetch('./assets/fonts/Paperlogy-400.woff2', { method:'HEAD', cache:'no-store' });
+    mark(r.ok, '글꼴 파일 경로',
+         r.ok ? `${r.headers.get('content-type') || 'type 미지정'}` : `${r.status} ${r.statusText}`);
+  } catch (_) { mark(false, '글꼴 파일 경로', '요청 실패'); }
+
+  // 4) 지금 보고 있는 CSS 가 최신인지 (build.sh 가 붙인 버전)
+  const link = [...document.querySelectorAll('link[rel=stylesheet]')]
+    .find(l => l.href.includes('app.css'));
+  const ver = link ? (link.href.match(/[?&]v=([^&]+)/) || [,'없음(로컬)'])[1] : '없음';
+  mark(true, '자산 버전', ver);
+
+  // 5) Supabase 연결 상태
+  const c = store.getConfig();
+  mark(c ? state.mode === 'supabase' : null, 'Supabase',
+       c ? `${state.mode === 'supabase' ? '연결됨' : '연결 실패'} · ${c.url}`
+         : '미설정 (브라우저 저장 모드)');
+
+  el.innerHTML = rows.join('');
+}
+
 /* ---------- 토스트 ---------- */
 let toastTimer;
 function toast(msg, isErr){
@@ -610,6 +662,7 @@ function renderNav(){
 async function renderView(){
   const out = VIEWS[current].render();
   $('#view').innerHTML = out instanceof Promise ? await out : out;
+  if (current === 'settings') runDiagnostics();
 }
 
 async function refresh(){ renderTop(); renderSpine(); renderNav(); await renderView(); }

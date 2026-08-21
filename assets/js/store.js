@@ -10,21 +10,45 @@ const DATA_KEY = 'wbshub.tasks.' + PROJECT.code;
 const LOG_KEY  = 'wbshub.log.' + PROJECT.code;
 
 /* --- 설정 --------------------------------------------------------- */
+
+/* Supabase URL 정규화.
+   PGRST125 "Invalid path specified in request URL" 는 경로 모양이 깨졌을 때
+   나옵니다. 대표적으로 두 경우입니다.
+     https://xxx.supabase.co/          -> //rest/v1/...        (끝 슬래시)
+     https://xxx.supabase.co/rest/v1   -> /rest/v1/rest/v1/... (API 경로까지 붙여넣음)
+   둘 다 여기서 걷어냅니다. */
+export function normalizeUrl(raw){
+  let s = String(raw || '').trim();
+  if (!s) return '';
+  s = s.replace(/^["'<]+|[">']+$/g, '');        // 따옴표·꺾쇠 붙여넣기
+  if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+  try {
+    const u = new URL(s);
+    return u.origin;                             // 경로·쿼리·해시 전부 제거
+  } catch (_) {
+    return s.replace(/\/rest\/v1.*$/i, '').replace(/\/+$/, '');
+  }
+}
+
 export function getConfig(){
   // 1순위: 빌드 시 주입된 값 (Render 환경변수 → config.js)
   const inj = window.__WBS_ENV__ || {};
-  const url = (inj.SUPABASE_URL || '').trim();
+  const rawUrl = (inj.SUPABASE_URL || '').trim();
   const key = (inj.SUPABASE_ANON_KEY || '').trim();
-  if (url && key && !url.startsWith('__')) return { url, key, source:'env' };
+  if (rawUrl && key && !rawUrl.startsWith('__')){
+    return { url: normalizeUrl(rawUrl), key, source: 'env' };
+  }
   // 2순위: 사용자가 설정 화면에서 입력한 값
   try {
     const c = JSON.parse(localStorage.getItem(CFG_KEY) || '{}');
-    if (c.url && c.key) return { url:c.url.replace(/\/+$/,''), key:c.key, source:'local' };
+    if (c.url && c.key) return { url: normalizeUrl(c.url), key: c.key, source: 'local' };
   } catch (_) {}
   return null;
 }
 export function saveConfig(url, key){
-  localStorage.setItem(CFG_KEY, JSON.stringify({ url:url.replace(/\/+$/,''), key }));
+  localStorage.setItem(CFG_KEY, JSON.stringify({
+    url: normalizeUrl(url), key: String(key || '').trim()
+  }));
 }
 export function clearConfig(){ localStorage.removeItem(CFG_KEY); }
 
@@ -38,6 +62,16 @@ function authHeaders(key){
 }
 
 /* --- Supabase REST 호출 ------------------------------------------- */
+function explain(status, body, base){
+  if (body.includes('PGRST125'))
+    return `경로 오류. Project URL 은 ${base} 형태여야 합니다. 뒤에 /rest/v1 이나 슬래시를 붙이지 마세요.`;
+  if (body.includes('PGRST205') || body.includes('PGRST106'))
+    return 'DB 는 붙었지만 테이블이 없습니다. schema.sql 과 seed.sql 을 먼저 실행하세요.';
+  if (status === 401 || body.includes('PGRST301'))
+    return '키가 거부됐습니다. Publishable 또는 anon 키가 맞는지 확인하세요.';
+  return `${status} ${body.slice(0,140)}`;
+}
+
 async function sb(path, opts = {}){
   const c = getConfig();
   if (!c) throw new Error('Supabase 설정이 없습니다.');
@@ -52,19 +86,23 @@ async function sb(path, opts = {}){
   });
   if (!res.ok){
     const body = await res.text();
-    throw new Error(`Supabase ${res.status}: ${body.slice(0,180)}`);
+    throw new Error(explain(res.status, body, c.url));
   }
   return res.status === 204 ? null : res.json();
 }
 
 export async function testConnection(url, key){
-  const res = await fetch(`${url.replace(/\/+$/,'')}/rest/v1/projects?select=code&limit=1`, {
-    headers: authHeaders(key)
-  });
-  if (!res.ok){
-    const body = await res.text();
-    throw new Error(`${res.status} ${res.statusText} ${body.slice(0,120)}`);
+  const base = normalizeUrl(url);
+  if (!base) throw new Error('URL 이 비어 있습니다.');
+  let res;
+  try {
+    res = await fetch(`${base}/rest/v1/projects?select=code&limit=1`, {
+      headers: authHeaders(String(key || '').trim())
+    });
+  } catch (_) {
+    throw new Error(`${base} 에 접속할 수 없습니다. 주소를 확인하세요.`);
   }
+  if (!res.ok) throw new Error(explain(res.status, await res.text(), base));
   const rows = await res.json();
   return Array.isArray(rows) ? rows.length : 0;
 }

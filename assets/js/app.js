@@ -124,13 +124,11 @@ function renderSpine(){
   const anchor = m => D(m.end || m.start);
   const nextIdx = ms.findIndex(m => anchor(m) >= today);
   const donePct = nextIdx < 0 ? 100 : (nextIdx / Math.max(ms.length - 1, 1)) * 100;
-  const adj = state.milestones.filter(m => m.adjusted).length;
 
   $('#spine').innerHTML = `
     <div class="spine-head">
       <h2>Milestone</h2>
       <em>${ms.length}개 · ${WEEKS}주 여정</em>
-      ${adj ? `<span class="badge b-amber">연도 보정 ${adj}건</span>` : ''}
     </div>
     <div class="spine-track">
       <div class="spine-line"></div>
@@ -277,7 +275,8 @@ function viewTree(){
 
   <div class="tree">
     <div class="tree-head">
-      <div>WBS</div><div>작업명</div><div class="r-deliv">산출물</div><div class="r-dates">기간</div>
+      <div>WBS</div><div>작업명</div>
+      <div class="r-date">계획시작</div><div class="r-date">계획종료</div>
       <div>진척</div><div class="r-status">상태</div><div class="r-days">일수</div>
     </div>
     <div id="rows">${treeRows()}</div>
@@ -327,11 +326,8 @@ function treeRows(){
         ${t.note ? `<span class="badge b-amber" title="${esc(t.note)}">메모</span>` : ''}
         ${overdue ? `<span class="badge b-rose">초과</span>` : ''}
       </div>
-      <div class="r-deliv">${esc(t.deliverable) || '<span style="color:#3D4A61">—</span>'}</div>
-      <div class="r-dates">
-        <s class="${t.dateSource==='auto'?'auto':''}">${fmt(t.start)}</s><br>
-        <s class="${t.dateSource==='auto'?'auto':''}">${fmt(t.end)}</s>
-      </div>
+      <div class="r-date ${t.dateSource==='auto'?'auto':''}">${fmt(t.start)}</div>
+      <div class="r-date ${t.dateSource==='auto'?'auto':''}">${fmt(t.end)}</div>
       <div class="r-prog">
         ${t.level === 4
           ? `<input type="range" min="0" max="100" step="5" value="${pr}" data-prog="${esc(t.code)}">
@@ -420,45 +416,7 @@ function viewGantt(){
 }
 
 /* ==================================================================
-   VIEW 4 — 산출물
-   ================================================================== */
-function viewDeliverables(){
-  const map = new Map();
-  state.tasks.filter(t => t.level === 4 && t.deliverable).forEach(t => {
-    t.deliverable.split(',').map(s => s.trim()).filter(Boolean).forEach(d => {
-      if (!map.has(d)) map.set(d, []);
-      map.get(d).push(t);
-    });
-  });
-  const items = [...map.entries()].sort((a,b) => b[1].length - a[1].length);
-
-  return `
-  <div class="view-head">
-    <div><h2>산출물</h2><p>${items.length}종 · WBS 리프 Task 에 붙은 문서를 이름으로 묶었습니다</p></div>
-  </div>
-  <div class="deliv">
-    ${items.map(([name, ts]) => {
-      const pr = Math.round(ts.reduce((a,t) => a + t.progress, 0) / ts.length);
-      return `<div class="card">
-        <div class="d-top">
-          <h4>${esc(name)}</h4>
-          <span class="badge ${pr>=100?'b-mint':pr>0?'b-signal':''}">${pr}%</span>
-        </div>
-        <div class="bar" style="margin-top:10px">
-          <i class="${pr>=100?'full':pr===0?'zero':''}" style="width:${pr}%"></i>
-        </div>
-        <div class="hint" style="margin-top:8px">관련 Task ${ts.length}건</div>
-        <ul>${ts.slice(0,5).map(t =>
-          `<li><code>${esc(t.code)}</code><span>${esc(t.name)}</span></li>`).join('')}
-          ${ts.length > 5 ? `<li style="color:#4E5C74">외 ${ts.length - 5}건</li>` : ''}
-        </ul>
-      </div>`;
-    }).join('')}
-  </div>`;
-}
-
-/* ==================================================================
-   VIEW 5 — 변경 이력
+   VIEW 4 — 변경 이력
    ================================================================== */
 async function viewLog(){
   const log = await store.fetchLog();
@@ -483,7 +441,7 @@ async function viewLog(){
 }
 
 /* ==================================================================
-   VIEW 6 — 설정
+   VIEW 5 — 설정
    ================================================================== */
 function viewSettings(){
   const c = store.getConfig();
@@ -598,12 +556,15 @@ function exportJson(){
 /* ==================================================================
    엑셀 왕복
    ================================================================== */
-function exportXlsx(){
-  if (typeof XLSX === 'undefined') return toast('엑셀 모듈을 불러오지 못했습니다.', true);
-  const wb = excel.buildWorkbook(state.tasks, state.project, progressOf);
-  excel.downloadWorkbook(wb,
-    `WBS_${state.project.code}_${new Date().toISOString().slice(0,10)}.xlsx`);
-  toast('엑셀을 내려받았습니다. 고친 뒤 [엑셀 올리기] 로 넣으세요.');
+async function exportXlsx(){
+  try {
+    const bytes = await excel.buildWorkbook(state.tasks, state.project, progressOf);
+    excel.downloadWorkbook(bytes,
+      `WBS_${state.project.code}_${new Date().toISOString().slice(0,10)}.xlsx`);
+    toast('엑셀을 내려받았습니다. 노란 칸을 고친 뒤 [엑셀 올리기] 로 넣으세요.');
+  } catch (e){
+    toast('엑셀 만들기 실패: ' + e.message, true);
+  }
 }
 
 let pending = null;   // 미리보기에서 확인 대기 중인 변경분
@@ -822,7 +783,6 @@ const VIEWS = {
   dashboard:   { label:'진척 현황', icon:ICON.dash,  render:viewDashboard },
   tree:        { label:'WBS 트리',  icon:ICON.tree,  render:viewTree },
   gantt:       { label:'일정 간트', icon:ICON.gantt, render:viewGantt },
-  deliverables:{ label:'산출물',    icon:ICON.file,  render:viewDeliverables },
   log:         { label:'변경 이력', icon:ICON.hist,  render:viewLog },
   settings:    { label:'설정',      icon:ICON.cog,   render:viewSettings }
 };
@@ -873,7 +833,7 @@ function bind(){
       $('#rows').innerHTML = treeRows();
     }
     if (id === 'exportCsv' || id === 'expCsv') exportCsv();
-    if (id === 'exportXlsx' || id === 'expXlsx') exportXlsx();
+    if (id === 'exportXlsx' || id === 'expXlsx') await exportXlsx();
     if (id === 'importXlsx' || id === 'impXlsx') $('#xlsxFile')?.click();
     if (id === 'writeTest') await runWriteTest();
     if (id === 'modalClose' || id === 'modalCancel') closePreview();

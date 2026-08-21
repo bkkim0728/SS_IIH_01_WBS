@@ -3,6 +3,8 @@
    SheetJS 는 index.html 에서 전역(XLSX)으로 먼저 읽힙니다.
    ================================================================== */
 
+import { writeXlsx, S } from './xlsx-writer.js';
+
 export const SHEET = 'WBS';
 export const HELP_SHEET = '작성안내';
 
@@ -66,66 +68,100 @@ function toStatus(v){
 /* ==================================================================
    내려받기
    ================================================================== */
-export function buildWorkbook(tasks, project, progressOf){
-  const rows = tasks.map(t => {
-    const o = {};
-    for (const c of COLUMNS){
-      let v;
-      switch (c.key){
-        case 'progress': v = progressOf(t); break;
-        case 'status':   v = t.level === 4 ? (STATUS_LABEL[t.status] || '미착수') : ''; break;
-        case 'parent':   v = t.parent || ''; break;
-        default:         v = t[c.key] ?? '';
-      }
-      o[c.head] = v;
+export async function buildWorkbook(tasks, project, progressOf){
+  // --- 머리글 ---
+  const head = COLUMNS.map(c => ({ v: c.head, s: S.HEAD }));
+
+  // --- 본문 ---
+  const CENTER = new Set(['level','days','progress','status']);
+  const rows = tasks.map(t => COLUMNS.map(c => {
+    let v;
+    switch (c.key){
+      case 'progress': v = progressOf(t); break;
+      case 'status':   v = t.level === 4 ? (STATUS_LABEL[t.status] || '미착수') : ''; break;
+      case 'parent':   v = t.parent || ''; break;
+      default:         v = t[c.key] ?? '';
     }
-    return o;
-  });
+    const bold = t.level <= 2;
+    const center = CENTER.has(c.key);
+    let style;
+    if (c.edit) style = bold ? S.EDIT_LB : (center ? S.EDIT_C : S.EDIT_L);
+    else        style = bold ? (center ? S.LOCK_CB : S.LOCK_LB) : (center ? S.LOCK_C : S.LOCK_L);
+    const numeric = (c.key === 'level' || c.key === 'days' || c.key === 'progress');
+    return { v, s: style, t: numeric && v !== '' ? 'n' : undefined };
+  }));
 
-  const ws = XLSX.utils.json_to_sheet(rows, { header: COLUMNS.map(c => c.head) });
-  ws['!cols'] = COLUMNS.map(c => ({ wch: c.width }));
-  ws['!freeze'] = { xSplit:'0', ySplit:'1' };
-  ws['!autofilter'] = { ref: `A1:K${rows.length + 1}` };
+  const last = tasks.length + 1;
+  const wsMain = {
+    name: SHEET,
+    rows: [head, ...rows],
+    opts: {
+      cols: COLUMNS.map(c => ({ w: c.width })),
+      freeze: 'D2',
+      headHeight: 26,
+      autoFilter: `A1:K${last}`,
+      validations: [
+        { type:'list', sqref:`K2:K${last}`, f1:'"미착수,진행중,완료,지연"',
+          title:'쓸 수 없는 값', msg:'미착수 / 진행중 / 완료 / 지연 중에서 고르세요.',
+          prompt:'목록에서 고르세요.' },
+        { type:'whole', operator:'between', sqref:`J2:J${last}`, f1:'0', f2:'100',
+          title:'범위를 벗어남', msg:'진척률은 0에서 100 사이 정수입니다.' }
+      ]
+    }
+  };
 
-  const help = [
-    ['WBS 수정 양식 — 작성 안내'],
+  // --- 안내 시트 ---
+  const T = v => ({ v, s: S.TITLE });
+  const H = v => ({ v, s: S.SECTION });
+  const L = v => ({ v, s: S.LABEL });
+  const P = v => ({ v, s: S.PLAIN });
+  const editable = COLUMNS.filter(c => c.edit).map(c => c.head).join(' · ');
+  const locked   = COLUMNS.filter(c => !c.edit).map(c => c.head).join(' · ');
+
+  const guide = [
+    [T('WBS 수정 양식 — 작성 안내')],
     [],
-    ['프로젝트', `${project.name} (${project.code} ${project.version})`],
-    ['기간', `${project.start} ~ ${project.end}`],
-    ['내려받은 시각', new Date().toLocaleString('ko-KR')],
-    ['Task 수', String(tasks.length)],
+    [L('프로젝트'), P(`${project.name} (${project.code} ${project.version})`)],
+    [L('기간'),     P(`${project.start} ~ ${project.end}`)],
+    [L('Task 수'),  P(`${tasks.length}건 (L4 리프 ${tasks.filter(t => t.level === 4).length}건)`)],
+    [L('내려받은 시각'), P(new Date().toLocaleString('ko-KR'))],
     [],
-    ['1. 이 파일을 고친 뒤 앱의 [엑셀 올리기] 로 다시 넣으면 반영됩니다.'],
-    ['2. 반영 전에 무엇이 바뀌는지 미리보기로 확인할 수 있습니다.'],
+    [H('쓰는 법')],
+    [P(''), P('1. 노란 칸만 고칩니다. 회색 칸은 고쳐도 무시됩니다.')],
+    [P(''), P('2. 앱의 WBS 트리 화면에서 [엑셀 올리기] 로 이 파일을 넣습니다.')],
+    [P(''), P('3. 무엇이 바뀌는지 미리보기로 확인한 뒤 반영합니다.')],
     [],
-    ['고칠 수 있는 열'],
-    ...COLUMNS.filter(c => c.edit).map(c => ['', c.head]),
+    [H('고칠 수 있는 칸 (노랑)')],
+    [P(''), P(editable)],
     [],
-    ['고쳐도 무시되는 열 (구조 유지용)'],
-    ...COLUMNS.filter(c => !c.edit).map(c => ['', c.head]),
+    [H('고정 칸 (회색)')],
+    [P(''), P(locked)],
+    [P(''), P('WBS 는 각 행을 알아보는 열쇠입니다. 절대 바꾸지 마세요.')],
     [],
-    ['작성 규칙'],
-    ['', 'WBS 열은 각 행을 식별하는 열쇠입니다. 절대 바꾸지 마세요.'],
-    ['', '행 순서를 바꾸거나 정렬해도 괜찮습니다. WBS 코드로 찾아갑니다.'],
-    ['', '날짜는 2026-09-01 형식으로 씁니다. 엑셀 날짜 서식도 인식합니다.'],
-    ['', '진척률은 0~100 사이 숫자입니다.'],
-    ['', `상태는 ${Object.values(STATUS_LABEL).join(' / ')} 중 하나입니다.`],
-    ['', 'L4(맨 아래) Task 의 진척률만 입력하세요. 상위 단계는 자동 계산됩니다.'],
-    ['', '행을 지우면 삭제 후보로 표시되고, 반영 여부는 미리보기에서 고릅니다.'],
-    ['', '새 행을 추가하려면 WBS, 레벨, 상위, 작업명을 채우세요.'],
+    [H('규칙')],
+    [P(''), P('행 순서를 바꾸거나 정렬해도 됩니다. WBS 코드로 찾아갑니다.')],
+    [P(''), P('날짜는 2026-09-01 형식. 엑셀 날짜 서식도 인식합니다.')],
+    [P(''), P('진척률은 0~100. 상태는 드롭다운에서 고릅니다.')],
+    [P(''), P('L4 Task 의 진척률만 넣으세요. 상위 단계는 자동 계산됩니다.')],
+    [P(''), P('진척률 100 을 넣으면 상태가 완료로 자동 정리됩니다.')],
+    [],
+    [H('행을 지우면')],
+    [P(''), P('삭제 후보로 표시만 됩니다. 실제 삭제는 미리보기에서 따로 켜야 합니다.')],
+    [P(''), P('상위 Task 를 지우면 하위 Task 도 함께 지워집니다.')],
+    [],
+    [H('행을 더하면')],
+    [P(''), P('WBS · 레벨 · 상위 · 작업명 네 칸을 채우면 새 Task 로 추가됩니다.')],
+    [P(''), P('상위가 실제로 있는 코드여야 합니다.')],
   ];
-  const wsHelp = XLSX.utils.aoa_to_sheet(help);
-  wsHelp['!cols'] = [{ wch:22 }, { wch:64 }];
 
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, SHEET);
-  XLSX.utils.book_append_sheet(wb, wsHelp, HELP_SHEET);
-  return wb;
+  const wsGuide = { name: HELP_SHEET, rows: guide,
+    opts: { cols:[{ w:20 }, { w:78 }], landscape: true } };
+
+  return writeXlsx([wsMain, wsGuide]);
 }
 
-export function downloadWorkbook(wb, filename){
-  const buf = XLSX.write(wb, { type:'array', bookType:'xlsx' });
-  const url = URL.createObjectURL(new Blob([buf],
+export function downloadWorkbook(bytes, filename){
+  const url = URL.createObjectURL(new Blob([bytes],
     { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
   const a = Object.assign(document.createElement('a'), { href:url, download:filename });
   a.click();

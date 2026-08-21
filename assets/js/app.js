@@ -610,6 +610,11 @@ async function runDiagnostics(){
          r.ok ? `${r.headers.get('content-type') || 'type 미지정'}` : `${r.status} ${r.statusText}`);
   } catch (_) { mark(false, '글꼴 파일 경로', '요청 실패'); }
 
+  // 3-b) store.js 가 최신인지. normalizeUrl 은 최신 버전에만 있다.
+  const fresh = typeof store.normalizeUrl === 'function';
+  mark(fresh, '코드 버전(store.js)',
+       fresh ? '최신' : '옛 캐시가 남아 있습니다. 강력 새로고침(Ctrl/Cmd+Shift+R) 하세요.');
+
   // 4) 지금 보고 있는 CSS 가 최신인지 (build.sh 가 붙인 버전)
   const link = [...document.querySelectorAll('link[rel=stylesheet]')]
     .find(l => l.href.includes('app.css'));
@@ -618,9 +623,15 @@ async function runDiagnostics(){
 
   // 5) Supabase 연결 상태
   const c = store.getConfig();
-  mark(c ? state.mode === 'supabase' : null, 'Supabase',
-       c ? `${state.mode === 'supabase' ? '연결됨' : '연결 실패'} · ${c.url}`
-         : '미설정 (브라우저 저장 모드)');
+  if (!c){
+    mark(null, 'Supabase', '미설정 (브라우저 저장 모드)');
+  } else {
+    const dirty = /\/rest\/v1|\/$/.test(c.url);
+    mark(state.mode === 'supabase', 'Supabase',
+      `${state.mode === 'supabase' ? '연결됨' : '연결 실패'} · ${c.url}` +
+      (dirty ? ' ← URL 에 경로가 붙어 있습니다' : ''));
+    if (state.error) mark(false, '마지막 오류', state.error.slice(0, 90));
+  }
 
   el.innerHTML = rows.join('');
 }

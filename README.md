@@ -146,10 +146,20 @@ Project URL 모양이 깨진 경우입니다. 아래 둘 중 하나입니다.
 앱이 이제 두 경우를 모두 자동으로 잘라내지만, Render 환경변수는
 `https://xxx.supabase.co` 형태로 넣는 것이 정확합니다.
 
+진단 카드의 **코드 버전(store.js)** 이 "실패" 로 나오면, `app.js` 는 새것인데
+`store.js` 가 옛 캐시인 상태입니다. 강력 새로고침 한 번이면 풀립니다.
+
 **스타일이나 글꼴이 바뀌지 않을 때**
 
 브라우저가 옛 `app.css` 를 붙들고 있는 경우입니다. `render.yaml` 이 이제
 CSS/JS/HTML 에 `no-cache` 를 주고, `build.sh` 가 배포마다 `?v=커밋해시` 를 붙입니다.
+
+버전 스탬프는 세 곳 모두에 붙습니다. **셋 중 하나라도 빠지면 옛 파일이 섞여 돕니다.**
+
+1. `index.html` → `app.css`, `app.js`, `config.js`
+2. `app.js` 안의 `import './store.js'`
+3. `store.js` 안의 `import './seed.js'`
+
 이미 캐시된 브라우저는 한 번만 강력 새로고침 하세요.
 
 - Windows: `Ctrl` + `Shift` + `R`

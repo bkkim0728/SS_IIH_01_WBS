@@ -1,11 +1,14 @@
 # Render Blueprint — 이 저장소를 Render 에 연결하면 자동으로 읽힙니다.
 # Render 대시보드 > New > Blueprint > 이 GitHub 저장소 선택
+#
+# 참고: 정적 사이트(runtime: static)에는 plan 필드를 쓰지 않습니다.
+#       요금제 개념이 없어 항상 무료이고, plan 을 넣으면
+#       "no such plan free for service type web" 오류가 납니다.
 services:
   - type: web
     name: wbs-hub
     runtime: static
-    plan: free
-    buildCommand: ./build.sh
+    buildCommand: bash build.sh   # 실행 권한(+x)이 없어도 동작하도록 bash 로 호출
     staticPublishPath: .
     pullRequestPreviewsEnabled: true
     envVars:
@@ -23,7 +26,3 @@ services:
       - path: /assets/*
         name: Cache-Control
         value: public, max-age=3600
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html

@@ -91,7 +91,20 @@ B안 주석을 해제한 뒤, Supabase **Authentication** 에서 사용자를 �
 4. **Apply** 를 누르면 `build.sh` 가 이 값들을 `assets/js/config.js` 로 구워 넣습니다.
    접속하는 모두가 별도 설정 없이 Supabase 모드로 들어옵니다.
 
-무료 플랜으로 충분합니다. 정적 사이트라 슬립이 없고, main 브랜치에 push하면 자동 재배포됩니다.
+정적 사이트라 슬립이 없고, main 브랜치에 push하면 자동 재배포됩니다.
+
+### Blueprint 오류가 날 때
+
+**`services[0].plan no such plan free for service type web`**
+
+정적 사이트(`runtime: static`)에는 `plan` 필드를 쓰지 않습니다. 요금제 개념이 없어 항상 무료이고,
+`plan` 이 있으면 Render 가 웹 서비스 요금제 목록에서 값을 찾다가 실패합니다.
+`render.yaml` 에서 `plan:` 줄을 지우세요.
+
+**`./build.sh: permission denied`**
+
+git 에 실행 권한(+x)이 실리지 않은 경우입니다. `buildCommand` 를 `bash build.sh` 로 두면 해결됩니다.
+현재 `render.yaml` 은 이미 그렇게 되어 있습니다.
 
 > **anon 키를 공개해도 되나요?**
 > 됩니다. anon 키는 브라우저에 노출되도록 설계된 값이고, 실제 접근 통제는 RLS 정책이 합니다.

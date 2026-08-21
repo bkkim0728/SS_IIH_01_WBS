@@ -33,7 +33,8 @@ const ICON = {
   down:'<path d="M12 3v13M6 12l6 6 6-6M4 21h16"/>',
   chev:'<path d="M9 6l6 6-6 6"/>',
   up:'<path d="M12 21V8M6 12l6-6 6 6M4 3h16"/>',
-  sheet:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/>'
+  sheet:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/>',
+  trash:'<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/>'
 };
 const svg = (d, w = 18) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
@@ -241,6 +242,7 @@ function viewDashboard(){
    VIEW 2 — WBS 트리
    ================================================================== */
 const collapsed = new Set();
+const selected = new Set();          // 삭제하려고 고른 WBS 코드
 let filter = { q:'', status:'', level:'4' };
 
 function viewTree(){
@@ -273,8 +275,13 @@ function viewTree(){
     <input type="file" id="xlsxFile" accept=".xlsx,.xls" hidden>
   </div>
 
+  <div id="selBar"></div>
+
   <div class="tree">
     <div class="tree-head">
+      <div class="r-pick">
+        <input type="checkbox" id="pickAll" title="보이는 Task 모두 고르기">
+      </div>
       <div>WBS</div><div>작업명</div>
       <div class="r-date">계획시작</div><div class="r-date">계획종료</div>
       <div>진척</div><div class="r-status">상태</div><div class="r-days">일수</div>
@@ -316,7 +323,11 @@ function treeRows(){
     const st = STATUS[t.status] || STATUS.not_started;
     const overdue = t.status !== 'done' && D(t.end) && D(t.end) < today;
     return `
-    <div class="row lv${t.level}" data-code="${esc(t.code)}">
+    <div class="row lv${t.level} ${selected.has(t.code)?'picked':''}" data-code="${esc(t.code)}">
+      <div class="r-pick">
+        <input type="checkbox" data-pick="${esc(t.code)}" ${selected.has(t.code)?'checked':''}
+               aria-label="${esc(t.code)} 고르기">
+      </div>
       <div class="r-code indent-${t.level}">
         <span class="twist ${kid ? (open?'open':'') : 'leaf'}" data-toggle="${esc(t.code)}">${svg(ICON.chev,12)}</span>
         <code>${esc(t.code)}</code>
@@ -553,6 +564,95 @@ function exportJson(){
 }
 
 
+
+/* ==================================================================
+   표에서 삭제
+   ================================================================== */
+function visibleCodes(){
+  return $$('#rows .row').map(r => r.dataset.code);
+}
+
+function renderSelBar(){
+  const bar = $('#selBar');
+  if (!bar) return;
+  if (!selected.size){ bar.innerHTML = ''; bar.classList.remove('on'); return; }
+
+  const victims = store.expandRemoval([...selected]);
+  const extra = victims.length - selected.size;
+  bar.classList.add('on');
+  bar.innerHTML = `
+    <div class="sel-bar">
+      <span class="badge b-signal" style="font-size:12px;padding:4px 9px">${selected.size}건 선택</span>
+      ${extra > 0 ? `<span class="hint">하위 Task ${extra}건이 함께 지워집니다</span>` : ''}
+      <div style="flex:1"></div>
+      <button class="btn ghost" id="pickClear">선택 해제</button>
+      <button class="btn danger" id="pickDelete">${svg(ICON.trash,14)} 삭제</button>
+    </div>`;
+
+  const all = $('#pickAll');
+  if (all){
+    const vis = visibleCodes();
+    const on = vis.filter(c => selected.has(c)).length;
+    all.checked = on > 0 && on === vis.length;
+    all.indeterminate = on > 0 && on < vis.length;
+  }
+}
+
+function togglePick(code, on){
+  on ? selected.add(code) : selected.delete(code);
+  const row = $(`#rows .row[data-code="${CSS.escape(code)}"]`);
+  if (row) row.classList.toggle('picked', on);
+  renderSelBar();
+}
+
+function confirmDelete(){
+  const victims = store.expandRemoval([...selected]);
+  const direct = new Set(selected);
+  const byLevel = victims.reduce((a, t) => (a[t.level] = (a[t.level] || 0) + 1, a), {});
+
+  openModal({
+    title: 'Task 삭제',
+    sub: `${victims.length}건이 지워집니다`,
+    danger: true,
+    applyLabel: `${victims.length}건 삭제`,
+    body: `
+      <div class="note" style="border-left-color:var(--rose);background:var(--rose-bg);color:#F5C4CE;margin-bottom:14px">
+        <b>되돌릴 수 없습니다.</b>
+        직접 고른 ${direct.size}건과 그 하위 ${victims.length - direct.size}건을 지웁니다.
+        지우기 전에 [엑셀 내려받기] 로 현재 상태를 받아 두시는 편이 안전합니다.
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        ${[1,2,3,4].filter(l => byLevel[l]).map(l =>
+          `<span class="badge">L${l} ${byLevel[l]}건</span>`).join('')}
+      </div>
+      <div class="chg-list">
+        ${victims.slice(0,80).map(t => `
+          <div class="chg">
+            <code>${esc(t.code)}</code>
+            <div style="font-size:12.5px">
+              ${esc(t.name)}
+              ${direct.has(t.code) ? '' : '<span class="badge b-amber" style="margin-left:6px">하위</span>'}
+            </div>
+          </div>`).join('')}
+        ${victims.length > 80 ? `<div class="chg" style="color:var(--muted)">외 ${victims.length - 80}건</div>` : ''}
+      </div>`,
+    onApply: async () => {
+      const btn = $('#modalApply');
+      btn.disabled = true; btn.textContent = '삭제 중…';
+      try {
+        const r = await store.deleteTasks([...selected]);
+        selected.clear();
+        closePreview();
+        await refresh();
+        toast(`${r.removed}건을 지웠습니다.`);
+      } catch (e){
+        btn.disabled = false; btn.textContent = '다시 시도';
+        toast('삭제 실패: ' + e.message, true);
+      }
+    }
+  });
+}
+
 /* ==================================================================
    엑셀 왕복
    ================================================================== */
@@ -655,15 +755,32 @@ function openPreview(){
       엑셀 ${d.rowCount}행을 읽었고 ${d.matched}건이 기존 Task 와 일치합니다.</div>` : ''}
   `;
 
-  $('#modalTitle').textContent = '엑셀 반영 미리보기';
-  $('#modalSub').textContent = `${d.fileName} · ${d.sheetName} 시트 · ${d.rowCount}행`;
-  $('#modalBody').innerHTML = body;
-  $('#modalApply').style.display = (total || d.removes.length) ? '' : 'none';
-  $('#modalApply').textContent = total ? `${total}건 반영` : '삭제만 반영';
-  $('#modal').classList.add('on');
+  openModal({
+    title: '엑셀 반영 미리보기',
+    sub: `${d.fileName} · ${d.sheetName} 시트 · ${d.rowCount}행`,
+    body,
+    applyLabel: total ? `${total}건 반영` : '삭제만 반영',
+    onApply: (total || d.removes.length) ? applyPending : null
+  });
 }
 
-function closePreview(){ $('#modal').classList.remove('on'); pending = null; }
+function closePreview(){ $('#modal').classList.remove('on'); pending = null; modalAction = null; }
+
+let modalAction = null;
+
+/* 제목·본문·확인버튼을 받아 모달을 연다. onApply 가 실제 동작. */
+function openModal({ title, sub, body, applyLabel, onApply, danger }){
+  $('#modalTitle').textContent = title;
+  $('#modalSub').textContent = sub || '';
+  $('#modalBody').innerHTML = body;
+  const btn = $('#modalApply');
+  btn.style.display = onApply ? '' : 'none';
+  btn.textContent = applyLabel || '확인';
+  btn.classList.toggle('danger', !!danger);
+  btn.disabled = false;
+  modalAction = onApply;
+  $('#modal').classList.add('on');
+}
 
 async function applyPending(){
   if (!pending) return;
@@ -803,6 +920,7 @@ async function renderView(){
   const out = VIEWS[current].render();
   $('#view').innerHTML = out instanceof Promise ? await out : out;
   if (current === 'settings') runDiagnostics();
+  if (current === 'tree') renderSelBar();
 }
 
 async function refresh(){ renderTop(); renderSpine(); renderNav(); await renderView(); }
@@ -822,22 +940,26 @@ function bind(){
       const c = tw.dataset.toggle;
       collapsed.has(c) ? collapsed.delete(c) : collapsed.add(c);
       $('#rows').innerHTML = treeRows();
+      renderSelBar();
       return;
     }
 
     const id = e.target.closest('button')?.id;
     if (!id) return;
-    if (id === 'expandAll'){ collapsed.clear(); $('#rows').innerHTML = treeRows(); }
+    if (id === 'pickClear'){ selected.clear(); $('#rows').innerHTML = treeRows(); renderSelBar(); return; }
+    if (id === 'pickDelete'){ confirmDelete(); return; }
+    if (id === 'expandAll'){ collapsed.clear(); $('#rows').innerHTML = treeRows(); renderSelBar(); }
     if (id === 'collapseAll'){
       state.tasks.filter(t => t.level === 2).forEach(t => collapsed.add(t.code));
       $('#rows').innerHTML = treeRows();
+      renderSelBar();
     }
     if (id === 'exportCsv' || id === 'expCsv') exportCsv();
     if (id === 'exportXlsx' || id === 'expXlsx') await exportXlsx();
     if (id === 'importXlsx' || id === 'impXlsx') $('#xlsxFile')?.click();
     if (id === 'writeTest') await runWriteTest();
     if (id === 'modalClose' || id === 'modalCancel') closePreview();
-    if (id === 'modalApply') await applyPending();
+    if (id === 'modalApply' && modalAction) await modalAction();
     if (id === 'expJson') exportJson();
     if (id === 'resetLocal'){
       store.resetLocal(); toast('원본 WBS 상태로 되돌렸습니다.');
@@ -862,7 +984,7 @@ function bind(){
 
   document.addEventListener('input', async e => {
     const t = e.target;
-    if (t.id === 'q'){ filter.q = t.value; $('#rows').innerHTML = treeRows(); return; }
+    if (t.id === 'q'){ filter.q = t.value; $('#rows').innerHTML = treeRows(); renderSelBar(); return; }
     if (t.dataset.prog){
       const row = t.closest('.row');
       row.querySelector('.pct').textContent = t.value + '%';
@@ -871,14 +993,21 @@ function bind(){
 
   document.addEventListener('change', async e => {
     const t = e.target;
+    if (t.dataset.pick){ togglePick(t.dataset.pick, t.checked); return; }
+    if (t.id === 'pickAll'){
+      visibleCodes().forEach(c => t.checked ? selected.add(c) : selected.delete(c));
+      $('#rows').innerHTML = treeRows();
+      renderSelBar();
+      return;
+    }
     if (t.id === 'xlsxFile'){
       const f = t.files && t.files[0];
       t.value = '';                      // 같은 파일을 다시 골라도 반응하도록
       if (f) await handleFile(f);
       return;
     }
-    if (t.id === 'fStatus'){ filter.status = t.value; $('#rows').innerHTML = treeRows(); return; }
-    if (t.id === 'fLevel'){ filter.level = t.value; $('#rows').innerHTML = treeRows(); return; }
+    if (t.id === 'fStatus'){ filter.status = t.value; $('#rows').innerHTML = treeRows(); renderSelBar(); return; }
+    if (t.id === 'fLevel'){ filter.level = t.value; $('#rows').innerHTML = treeRows(); renderSelBar(); return; }
     if (t.id === 'gDepth'){ ganttDepth = +t.value; await renderView(); return; }
 
     if (t.dataset.prog || t.dataset.status){

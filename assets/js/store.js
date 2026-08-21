@@ -286,7 +286,7 @@ export function resetLocal(){
    엑셀 반영 — 여러 건을 한 번에 처리한다.
    Supabase 모드에서는 실패 시 화면 상태를 되돌린다.
    ================================================================== */
-export async function applyBulk({ updates = [], adds = [], removes = [] }){
+export async function applyBulk({ updates = [], adds = [], removes = [], source = '엑셀' }){
   const snapshot = JSON.parse(JSON.stringify(state.tasks));
   const result = { updated: 0, added: 0, removed: 0 };
 
@@ -327,7 +327,7 @@ export async function applyBulk({ updates = [], adds = [], removes = [] }){
     else {
       localStorage.setItem(DATA_KEY, JSON.stringify(state.tasks));
       pushLocalLog({
-        at: new Date().toISOString(), code: '엑셀',
+        at: new Date().toISOString(), code: source,
         name: `수정 ${result.updated} · 추가 ${result.added} · 삭제 ${result.removed}`,
         fromProgress: 0, toProgress: 0, fromStatus: 'not_started', toStatus: 'in_progress'
       });
@@ -391,4 +391,22 @@ async function getProjectId(){
   const rows = await sb(`projects?code=eq.${encodeURIComponent(PROJECT.code)}&select=id`);
   _projectId = rows && rows[0] ? rows[0].id : null;
   return _projectId;
+}
+
+
+/* 표에서 고른 Task 를 지운다. 하위 Task 는 applyBulk 가 알아서 함께 지운다. */
+export async function deleteTasks(codes){
+  const removes = state.tasks.filter(t => codes.includes(t.code));
+  if (!removes.length) return { removed: 0 };
+  return applyBulk({ removes, source: '삭제' });
+}
+
+/* 지웠을 때 함께 사라질 하위 Task 까지 미리 계산한다. */
+export function expandRemoval(codes){
+  const kill = new Set();
+  for (const c of codes){
+    kill.add(c);
+    state.tasks.forEach(t => { if (t.code.startsWith(c + '.')) kill.add(t.code); });
+  }
+  return state.tasks.filter(t => kill.has(t.code));
 }

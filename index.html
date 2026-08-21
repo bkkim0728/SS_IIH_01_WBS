@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WBS HUB · 투자정보 HUB + 해외시세 감시</title>
+<meta name="description" content="SS-SIIIDS 투자정보 HUB 프로젝트의 WBS 진척, 마일스톤, 산출물을 한 화면에서 관리합니다.">
+<meta name="color-scheme" content="dark">
+<meta property="og:title" content="WBS HUB · 투자정보 HUB + 해외시세 감시">
+<meta property="og:description" content="44주 여정을 한 화면에. WBS 진척, 마일스톤, 산출물 관리.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%233B6FFF'/%3E%3Cpath d='M8 10h16M8 16h11M8 22h7' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="./assets/css/app.css">
+</head>
+<body>
+
+<div class="app">
+  <aside class="rail">
+    <div class="brand">
+      <div class="brand-mark">W</div>
+      <div class="brand-txt"><b>WBS HUB</b><span>SS-SIIIDS</span></div>
+    </div>
+    <nav class="nav" id="nav" aria-label="주 메뉴"></nav>
+    <div class="rail-foot">
+      <div class="conn" id="conn">
+        <span class="dot"></span><span>불러오는 중</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar" id="topbar"></header>
+    <section class="spine" id="spine"></section>
+    <div class="view" id="view"></div>
+  </main>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<!-- Render 배포 시 환경변수가 여기에 주입됩니다. 없으면 브라우저 저장 모드로 동작합니다. -->
+<script src="./assets/js/config.js"></script>
+<script type="module" src="./assets/js/app.js"></script>
+</body>
+</html>

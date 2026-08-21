@@ -1,4 +1,25 @@
 /* ==================================================================
+   페이퍼로지 (Paperlogy) — SIL Open Font License 1.1
+   assets/fonts/LICENSE.txt 참고
+   ================================================================== */
+@font-face{
+  font-family:'Paperlogy'; font-style:normal; font-weight:400; font-display:swap;
+  src:url('../fonts/Paperlogy-400.woff2') format('woff2');
+}
+@font-face{
+  font-family:'Paperlogy'; font-style:normal; font-weight:500; font-display:swap;
+  src:url('../fonts/Paperlogy-500.woff2') format('woff2');
+}
+@font-face{
+  font-family:'Paperlogy'; font-style:normal; font-weight:600; font-display:swap;
+  src:url('../fonts/Paperlogy-600.woff2') format('woff2');
+}
+@font-face{
+  font-family:'Paperlogy'; font-style:normal; font-weight:700; font-display:swap;
+  src:url('../fonts/Paperlogy-700.woff2') format('woff2');
+}
+
+/* ==================================================================
    WBS HUB — design tokens
    팔레트: 야간 트레이딩 데스크. 짙은 잉크 위에 신호등 3색만 쓴다.
    ================================================================== */
@@ -27,8 +48,11 @@
   --r-sm: 6px; --r: 10px; --r-lg: 16px;
   --rail: 212px;
   --shadow: 0 18px 44px rgba(0,0,0,.5);
-  --mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
-  --sans: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont,
+  /* Paperlogy 는 숫자가 모두 0.667em 고정폭이라, 사내망에서 구글 폰트가
+     막혀도 숫자 열 정렬이 유지됩니다. 완전 오프라인으로 쓰려면
+     'JetBrains Mono' 를 지우고 index.html 의 구글 폰트 link 도 지우세요. */
+  --mono: 'JetBrains Mono', 'Paperlogy', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  --sans: 'Paperlogy', -apple-system, BlinkMacSystemFont,
           'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
   --ease: cubic-bezier(.22,.61,.36,1);
 }
@@ -37,7 +61,8 @@
 html,body{ height:100%; }
 body{
   margin:0; background:var(--ink); color:var(--text);
-  font-family:var(--sans); font-size:14px; line-height:1.55;
+  font-family:var(--sans); font-size:14px; line-height:1.6;
+  word-spacing:.04em;   /* Paperlogy 의 space 글리프가 0.22em 으로 좁다 */
   -webkit-font-smoothing:antialiased;
   background-image:
     radial-gradient(900px 460px at 78% -12%, rgba(59,111,255,.10), transparent 62%),
@@ -59,8 +84,8 @@ a{ color:var(--signal-2); }
 *::-webkit-scrollbar-thumb{ background:#222E47; border-radius:8px; border:2px solid var(--ink); }
 *::-webkit-scrollbar-thumb:hover{ background:#2F3E5D; }
 
-.mono{ font-family:var(--mono); font-variant-numeric:tabular-nums; }
-.num{ font-family:var(--mono); font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
+.mono{ font-family:var(--mono); font-variant-numeric:tabular-nums; word-spacing:normal; }
+.num{ font-family:var(--mono); font-variant-numeric:tabular-nums; letter-spacing:-.02em; word-spacing:normal; }
 
 /* ==================================================================
    앱 골격
@@ -82,7 +107,7 @@ a{ color:var(--signal-2); }
   font-weight:700; font-size:13px; color:#fff;
   box-shadow:0 0 0 1px rgba(255,255,255,.12) inset, 0 6px 18px rgba(59,111,255,.35);
 }
-.brand-txt b{ display:block; font-size:14px; letter-spacing:-.02em; }
+.brand-txt b{ display:block; font-size:14px; letter-spacing:-.01em; }
 .brand-txt span{ display:block; font-size:10.5px; color:var(--muted); font-family:var(--mono); }
 
 .nav{ display:flex; flex-direction:column; gap:2px; }
@@ -124,7 +149,7 @@ a{ color:var(--signal-2); }
   background:rgba(7,10,18,.82); backdrop-filter:blur(14px);
   position:sticky; top:0; z-index:30;
 }
-.topbar h1{ margin:0; font-size:16.5px; font-weight:650; letter-spacing:-.025em; }
+.topbar h1{ margin:0; font-size:17px; font-weight:700; letter-spacing:-.012em; }
 .topbar .sub{ font-size:11.5px; color:var(--muted); font-family:var(--mono); }
 .topbar-right{ margin-left:auto; display:flex; align-items:center; gap:20px; }
 
@@ -160,7 +185,7 @@ a{ color:var(--signal-2); }
 .ms.next i{ background:var(--signal); border-color:var(--signal);
   box-shadow:0 0 0 5px var(--signal-bg); animation:pulse 2.4s infinite; }
 @keyframes pulse{ 50%{ box-shadow:0 0 0 9px rgba(59,111,255,.05); } }
-.ms b{ display:block; margin-top:7px; font-size:11.5px; font-weight:550; letter-spacing:-.01em;
+.ms b{ display:block; margin-top:7px; font-size:11.5px; font-weight:500; letter-spacing:0;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .ms span{ display:block; font-size:10px; color:var(--muted); font-family:var(--mono); }
 .ms.next b{ color:var(--signal-2); }
@@ -174,7 +199,7 @@ a{ color:var(--signal-2); }
 .view{ padding:24px 26px 60px; animation:rise .34s var(--ease) both; }
 @keyframes rise{ from{ opacity:0; transform:translateY(9px); } }
 .view-head{ display:flex; align-items:flex-end; gap:14px; margin-bottom:18px; flex-wrap:wrap; }
-.view-head h2{ margin:0; font-size:20px; font-weight:640; letter-spacing:-.03em; }
+.view-head h2{ margin:0; font-size:21px; font-weight:700; letter-spacing:-.015em; }
 .view-head p{ margin:0; font-size:12.5px; color:var(--muted); }
 .view-head .spacer{ flex:1; }
 
@@ -185,7 +210,7 @@ a{ color:var(--signal-2); }
   background:linear-gradient(180deg,var(--panel-2),var(--panel));
   border:1px solid var(--line); border-radius:var(--r-lg); padding:18px;
 }
-.card h3{ margin:0 0 3px; font-size:13px; font-weight:600; letter-spacing:-.01em; }
+.card h3{ margin:0 0 3px; font-size:13.5px; font-weight:600; letter-spacing:-.005em; }
 .card .hint{ font-size:11.5px; color:var(--muted); }
 
 .grid{ display:grid; gap:14px; }
@@ -226,6 +251,9 @@ a{ color:var(--signal-2); }
 
 .field{ display:flex; flex-direction:column; gap:6px; }
 .field label{ font-size:11.5px; color:var(--text-2); }
+.field .hint{ font-size:11px; line-height:1.5; color:var(--muted); }
+.field .hint code{ font-size:10.5px; color:var(--signal-2); }
+.note code{ font-size:11px; color:#F0DCB4; }
 .input{
   width:100%; padding:9px 11px; background:var(--ink); color:var(--text);
   border:1px solid var(--line); border-radius:var(--r); font-size:13px;
@@ -271,9 +299,9 @@ select.input{ appearance:none; padding-right:28px;
 .row:hover{ background:rgba(59,111,255,.045); }
 .row:last-child{ border-bottom:0; }
 .row.lv1{ background:linear-gradient(90deg,rgba(59,111,255,.10),transparent 60%); }
-.row.lv1 .r-name{ font-weight:650; font-size:14.5px; letter-spacing:-.02em; }
+.row.lv1 .r-name{ font-weight:700; font-size:14.5px; letter-spacing:-.01em; }
 .row.lv2 .r-name{ font-weight:600; color:#D3DCEC; }
-.row.lv3 .r-name{ font-weight:550; color:#C2CDE1; }
+.row.lv3 .r-name{ font-weight:500; color:#C2CDE1; }
 .row.lv4 .r-name{ color:var(--text-2); font-size:13px; }
 .row.hidden{ display:none; }
 
@@ -331,7 +359,7 @@ select.input{ appearance:none; padding-right:28px;
 .g-row:hover .g-label{ background:#131A28; }
 .g-label code{ font-family:var(--mono); font-size:10px; color:var(--signal-2); flex:none; }
 .g-label span{ font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.g-row.lv1 .g-label span{ font-weight:640; font-size:13px; }
+.g-row.lv1 .g-label span{ font-weight:700; font-size:13px; }
 .g-row.lv1{ background:rgba(59,111,255,.055); }
 .g-track{ flex:1; position:relative; height:100%; }
 .g-grid{ position:absolute; inset:0; display:flex; pointer-events:none; }
@@ -361,7 +389,7 @@ select.input{ appearance:none; padding-right:28px;
 .deliv{ display:grid; grid-template-columns:repeat(auto-fill,minmax(268px,1fr)); gap:12px; }
 .deliv .card{ padding:15px; }
 .deliv .d-top{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
-.deliv h4{ margin:0; font-size:13.5px; font-weight:600; letter-spacing:-.015em; }
+.deliv h4{ margin:0; font-size:14px; font-weight:600; letter-spacing:-.008em; }
 .deliv ul{ margin:10px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:4px; }
 .deliv li{ font-size:11.5px; color:var(--muted); display:flex; gap:7px; }
 .deliv li code{ font-family:var(--mono); font-size:10px; color:var(--signal-2); flex:none; }
@@ -373,7 +401,7 @@ select.input{ appearance:none; padding-right:28px;
 .log-item time{ font-family:var(--mono); font-size:11px; color:var(--muted); }
 
 .empty{ text-align:center; padding:56px 20px; color:var(--muted); }
-.empty b{ display:block; color:var(--text-2); font-size:14px; margin-bottom:6px; font-weight:550; }
+.empty b{ display:block; color:var(--text-2); font-size:14px; margin-bottom:6px; font-weight:500; }
 
 .toast{
   position:fixed; bottom:22px; left:50%; transform:translate(-50%,90px);

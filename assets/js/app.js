@@ -484,20 +484,31 @@ function viewSettings(){
   return `
   <div class="view-head"><div><h2>설정</h2><p>Supabase 를 연결하면 팀 전체가 같은 진척을 봅니다</p></div></div>
 
+  <div class="note" style="margin-bottom:14px">
+    <b>Project URL 이 안 보이나요?</b><br>
+    Supabase 가 대시보드를 개편해서 <span class="mono">Settings &gt; API</span> 한 화면에 있던 것이
+    <span class="mono">Settings &gt; Data API</span>(URL)와 <span class="mono">Settings &gt; API Keys</span>(키)로 갈라졌습니다.
+    가장 빠른 길은 프로젝트 상단의 <b>Connect</b> 버튼입니다. URL 과 키가 한 화면에 같이 나옵니다.
+  </div>
+
   <div class="grid g-2">
     <div class="card">
       <h3>Supabase 연결</h3>
       <div class="hint" style="margin-bottom:14px">
-        Supabase 프로젝트의 <b>Project URL</b> 과 <b>anon public</b> 키를 넣으세요.
+        두 값 모두 Supabase 대시보드 상단의 <b>Connect</b> 버튼 한 곳에 같이 나옵니다.
         키는 이 브라우저에만 저장됩니다. Render 환경변수로 넣으면 모두에게 자동 적용됩니다.
       </div>
       <div style="display:flex;flex-direction:column;gap:12px">
         <div class="field"><label>Project URL</label>
           <input class="input" id="sbUrl" placeholder="https://xxxxxxxx.supabase.co"
-                 value="${esc(c?.url || '')}"></div>
-        <div class="field"><label>anon public key</label>
-          <input class="input" id="sbKey" type="password" placeholder="eyJhbGciOi..."
-                 value="${esc(c?.key || '')}"></div>
+                 value="${esc(c?.url || '')}">
+          <span class="hint">대시보드 주소창의 <code class="mono">/project/<b>여기</b></code> 부분이
+            프로젝트 ID 입니다. <code class="mono">https://프로젝트ID.supabase.co</code> 가 곧 Project URL 입니다.</span></div>
+        <div class="field"><label>API 키</label>
+          <input class="input" id="sbKey" type="password" placeholder="sb_publishable_... 또는 eyJhbGciOi..."
+                 value="${esc(c?.key || '')}">
+          <span class="hint"><b>Publishable</b> 키(<code class="mono">sb_publishable_…</code>) 또는
+            레거시 <b>anon</b> 키 둘 다 됩니다. <b>Secret</b> 과 <b>service_role</b> 키는 절대 넣지 마세요.</span></div>
         <div style="display:flex;gap:9px;flex-wrap:wrap">
           <button class="btn primary" id="sbSave">연결하고 새로고침</button>
           <button class="btn" id="sbTest">연결만 확인</button>

@@ -58,10 +58,46 @@ git push -u origin main
    -- 1|5  2|5  3|31  4|110
    select * from v_task_rollup;
    ```
-6. **Project Settings > API** 에서 두 값을 복사합니다.
-   - `Project URL` → `https://xxxxxxxx.supabase.co`
-   - `anon` `public` 키 (`service_role` 키는 절대 쓰지 마세요)
+6. **Project URL 과 API 키를 복사합니다.** 아래 "키를 못 찾을 때" 참고.
 7. 앱의 **설정** 화면에 붙여넣고 **연결하고 새로고침**을 누릅니다.
+
+### 키를 못 찾을 때
+
+Supabase 가 대시보드를 개편해서, 예전에 `Settings > API` 한 화면에 같이 있던 것이
+**`Settings > Data API`(URL)** 와 **`Settings > API Keys`(키)** 로 갈라졌습니다.
+옛 튜토리얼을 따라가면 안 나옵니다.
+
+**가장 빠른 길: 프로젝트 상단의 `Connect` 버튼.** URL 과 키가 한 화면에 같이 나옵니다.
+
+직접 찾으려면:
+
+| 필요한 값 | 위치 |
+|---|---|
+| Project URL | `Settings > Data API` → **Project URL** |
+| API 키 | `Settings > API Keys` → **Publishable key** |
+| (레거시) anon 키 | `Settings > API Keys` → **Legacy API Keys** 탭 |
+
+URL 은 주소창에서도 알 수 있습니다. 대시보드 주소가
+`https://supabase.com/dashboard/project/abcdefgh...` 라면
+Project URL 은 `https://abcdefgh....supabase.co` 입니다.
+
+**Publishable 키가 안 보이면** `Settings > API Keys` 에서 **Create new API keys** 를 누르세요.
+기존 anon 키는 그대로 살아 있으니 안전합니다.
+
+### 어느 키를 넣어야 하나
+
+| 키 | 형식 | 이 앱에 |
+|---|---|---|
+| **Publishable** | `sb_publishable_...` | ✅ 권장 |
+| anon (레거시) | `eyJhbGciOi...` | ✅ 됨 (2026년 말 지원 종료 예정) |
+| Secret | `sb_secret_...` | ❌ 절대 금지 |
+| service_role (레거시) | `eyJhbGciOi...` | ❌ 절대 금지 |
+
+Secret 계열은 RLS 를 통째로 우회하므로 브라우저에 넣으면 DB 전체가 열립니다.
+
+> 앱은 두 형식을 자동으로 구분합니다. 새 publishable 키는 JWT 가 아니라서
+> `Authorization: Bearer` 헤더에 넣으면 Supabase 가 거부하기 때문에, JWT 로 시작하는
+> 레거시 키일 때만 그 헤더를 붙입니다.
 
 ### 권한 정책 고르기
 
@@ -86,7 +122,7 @@ B안 주석을 해제한 뒤, Supabase **Authentication** 에서 사용자를 �
    | Key | Value |
    |---|---|
    | `SUPABASE_URL` | `https://xxxxxxxx.supabase.co` |
-   | `SUPABASE_ANON_KEY` | `eyJhbGciOi...` |
+   | `SUPABASE_ANON_KEY` | `sb_publishable_...` 또는 `eyJhbGciOi...` |
 
 4. **Apply** 를 누르면 `build.sh` 가 이 값들을 `assets/js/config.js` 로 구워 넣습니다.
    접속하는 모두가 별도 설정 없이 Supabase 모드로 들어옵니다.
@@ -106,8 +142,8 @@ B안 주석을 해제한 뒤, Supabase **Authentication** 에서 사용자를 �
 git 에 실행 권한(+x)이 실리지 않은 경우입니다. `buildCommand` 를 `bash build.sh` 로 두면 해결됩니다.
 현재 `render.yaml` 은 이미 그렇게 되어 있습니다.
 
-> **anon 키를 공개해도 되나요?**
-> 됩니다. anon 키는 브라우저에 노출되도록 설계된 값이고, 실제 접근 통제는 RLS 정책이 합니다.
+> **이 키를 공개해도 되나요?**
+> 됩니다. publishable / anon 키는 브라우저에 노출되도록 설계된 값이고, 실제 접근 통제는 RLS 정책이 합니다.
 > 다만 A안 정책은 링크를 아는 사람이 수정할 수 있다는 뜻이므로, 외부 공유 전에는 B안으로 바꾸세요.
 
 ---
@@ -178,12 +214,52 @@ Supabase 에서는 `seed.sql` 재실행 전에 `tasks` 를 비우거나
 
 ---
 
-## 8. 파일 구조
+## 8. 글꼴
+
+본문은 **페이퍼로지(Paperlogy)** 를 자체 호스팅합니다. 배포본 TTF 를 웹용 woff2 로
+포맷만 바꿔 `assets/fonts/` 에 넣었고, 디자인과 자족 이름은 그대로입니다.
+SIL Open Font License 1.1 이라 이대로 재배포해도 됩니다 (`assets/fonts/LICENSE.txt`).
+
+| 웨이트 | 파일 | 쓰이는 곳 |
+|---|---|---|
+| 400 Regular | `Paperlogy-400.woff2` | 본문, 설명 |
+| 500 Medium | `Paperlogy-500.woff2` | L3 작업명, 마일스톤 이름 |
+| 600 SemiBold | `Paperlogy-600.woff2` | 카드 제목, L2 작업명 |
+| 700 Bold | `Paperlogy-700.woff2` | 화면 제목, L1 단계명 |
+
+원본 9종 중 4종만 씁니다. 한글 11,172자를 모두 담아 웨이트당 약 160KB,
+합계 약 640KB 입니다. 400 과 600 은 `preload` 로 먼저 받고 나머지는 필요할 때 받습니다.
+
+### 손본 것
+
+페이퍼로지는 space 글리프가 0.22em 으로 좁고 한글 자면이 0.88em 으로 촘촘합니다.
+그대로 쓰면 단어가 붙어 보여서 두 가지를 조정했습니다.
+
+- `word-spacing: .04em` 을 본문에 적용
+- 제목·작업명의 음수 자간을 절반으로 완화 (앞서 쓰던 가변 글꼴 기준값이었습니다)
+
+### 숫자와 코드
+
+WBS 코드, 날짜, 수치는 **JetBrains Mono** 로 두어 표가 세로로 정렬되게 했습니다.
+이 글꼴만 구글 폰트 CDN 에서 받습니다.
+
+**사내망에서 CDN 이 막혀도 정렬은 유지됩니다.** 페이퍼로지 숫자가 전부 0.667em
+고정폭이라 대체 글꼴로 들어가도 열이 어긋나지 않습니다 (차단 상태로 확인 완료).
+
+완전히 오프라인으로 쓰려면 두 곳만 지우면 됩니다.
+
+1. `index.html` 의 구글 폰트 `<link>` 와 `preconnect` 줄
+2. `app.css` 의 `--mono` 값에서 `'JetBrains Mono',`
+
+---
+
+## 9. 파일 구조
 
 ```
 wbs-hub/
 ├── index.html                  앱 셸
 ├── assets/
+│   ├── fonts/                  페이퍼로지 woff2 4종 + OFL 고지
 │   ├── css/app.css             디자인 토큰과 전체 스타일
 │   └── js/
 │       ├── seed.js             xlsx에서 추출한 WBS 데이터 (자동 생성)

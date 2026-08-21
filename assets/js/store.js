@@ -28,6 +28,15 @@ export function saveConfig(url, key){
 }
 export function clearConfig(){ localStorage.removeItem(CFG_KEY); }
 
+/* 새 publishable 키(sb_publishable_...)는 JWT 가 아니라서 Authorization 헤더에
+   넣으면 거부됩니다. 레거시 anon 키(JWT, eyJ... 로 시작)일 때만 붙입니다.
+   apikey 헤더는 두 종류 모두 필요합니다. */
+function authHeaders(key){
+  const h = { apikey: key };
+  if (key.startsWith('eyJ')) h.Authorization = `Bearer ${key}`;
+  return h;
+}
+
 /* --- Supabase REST 호출 ------------------------------------------- */
 async function sb(path, opts = {}){
   const c = getConfig();
@@ -35,10 +44,9 @@ async function sb(path, opts = {}){
   const res = await fetch(`${c.url}/rest/v1/${path}`, {
     ...opts,
     headers: {
-      apikey: c.key,
-      Authorization: `Bearer ${c.key}`,
+      ...authHeaders(c.key),
       'Content-Type': 'application/json',
-      Prefer: opts.method === 'PATCH' ? 'return=representation' : 'return=representation',
+      Prefer: 'return=representation',
       ...(opts.headers || {})
     }
   });
@@ -51,9 +59,12 @@ async function sb(path, opts = {}){
 
 export async function testConnection(url, key){
   const res = await fetch(`${url.replace(/\/+$/,'')}/rest/v1/projects?select=code&limit=1`, {
-    headers:{ apikey:key, Authorization:`Bearer ${key}` }
+    headers: authHeaders(key)
   });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok){
+    const body = await res.text();
+    throw new Error(`${res.status} ${res.statusText} ${body.slice(0,120)}`);
+  }
   const rows = await res.json();
   return Array.isArray(rows) ? rows.length : 0;
 }

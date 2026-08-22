@@ -5,6 +5,7 @@ import * as store from './store.js';
 import * as excel from './excel.js';
 import * as cal from './calendar.js';
 import { STAFF } from './staff.js';
+import { getResume } from './resume.js';
 import { state } from './store.js';
 
 /* ---------- 유틭 ---------- */
@@ -771,7 +772,7 @@ function viewStaff(){
       </thead>
       <tbody>
         ${s.rows.map(r => r.name ? `
-          <tr>
+          <tr ${getResume(r.name) ? `class="has-cv" data-cv="${esc(r.name)}" title="${esc(r.name)} 이력사항 보기"` : ''}>
             <td class="c-no">${cellNum(r.no)}</td>
             <td class="c-vendor">${esc(r.vendor)}</td>
             <td class="c-part">${esc(r.part)}</td>
@@ -822,6 +823,66 @@ function viewStaff(){
   </div>` : ''}
 
 `;
+}
+
+
+/* ==================================================================
+   이력사항 팝업
+   투입인력 표에서 사람 행을 누르면 열립니다.
+   ================================================================== */
+function openResume(name){
+  const cv = getResume(name);
+  if (!cv) return;
+  const row = (STAFF[staffTab] || STAFF[0]).rows.find(r => r.name === name) || {};
+
+  const fact = (k, v) => v ? `<div class="cv-fact"><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>` : '';
+
+  openModal({
+    title: `${cv.name} ${cv.title}`,
+    sub: `${cv.company} · ${cv.grade} · ${row.role || cv.role}`,
+    applyLabel: '닫기',
+    onApply: null,
+    body: `
+      <div class="cv-top">
+        ${row.photo ? `<img class="cv-photo" src="${esc(row.photo)}" alt="${esc(cv.name)}">`
+                    : `<span class="cv-photo none">${esc(cv.name.slice(0,1))}</span>`}
+        <dl class="cv-facts">
+          ${fact('기술등급', cv.grade)}
+          ${fact('연령', cv.age)}
+          ${fact('해당분야 근무경력', cv.career)}
+          ${fact('재직회사 근속연수', cv.tenure)}
+          ${fact('학력', [cv.school, cv.degree, cv.major].filter(Boolean).join(' · '))}
+          ${fact('프로젝트 참여임무', cv.role)}
+          ${fact('참여기간', cv.period)}
+          ${fact('참여율', cv.rate)}
+        </dl>
+      </div>
+
+      ${cv.certs.length ? `
+        <h4 class="cv-h">보유자격 ${cv.certs.length}</h4>
+        <div class="cv-certs">
+          ${cv.certs.map(c => `<span class="cv-cert"><b>${esc(c.name)}</b>${
+            c.issuer ? `<em>${esc(c.issuer)}</em>` : ''}</span>`).join('')}
+        </div>` : ''}
+
+      <h4 class="cv-h">주요 경력사항 ${cv.projects.length}건</h4>
+      <div class="cv-list">
+        ${cv.projects.map(pj => `
+          <div class="cv-item">
+            <div class="cv-period mono">${esc(pj.period)}</div>
+            <div class="cv-body">
+              <b>${esc(pj.title)}</b>
+              ${pj.summary && pj.summary !== pj.title ? `<p>${esc(pj.summary)}</p>` : ''}
+              <div class="cv-meta">
+                ${pj.role ? `<span class="badge b-signal">${esc(pj.role)}</span>` : ''}
+                ${pj.client ? `<span class="badge">${esc(pj.client)}</span>` : ''}
+              </div>
+            </div>
+          </div>`).join('')}
+      </div>
+
+      <div class="cv-src mono">출처 · ${esc(cv.file)}</div>`
+  });
 }
 
 /* ==================================================================
@@ -1576,6 +1637,9 @@ function openModal({ title, sub, body, applyLabel, onApply, danger }){
   $('#modalBody').innerHTML = body;
   const btn = $('#modalApply');
   btn.style.display = onApply ? '' : 'none';
+  // 확인 동작이 없는 창(읽기 전용)은 '취소' 대신 '닫기'
+  const cancel = $('#modalCancel');
+  if (cancel) cancel.textContent = onApply ? '취소' : '닫기';
   btn.textContent = applyLabel || '확인';
   btn.classList.toggle('danger', !!danger);
   btn.disabled = false;
@@ -1810,6 +1874,9 @@ function bind(){
       });
       return;
     }
+
+    const cvRow = e.target.closest('[data-cv]');
+    if (cvRow){ openResume(cvRow.dataset.cv); return; }
 
     const stab = e.target.closest('[data-staff]');
     if (stab){ staffTab = +stab.dataset.staff; await renderView(); return; }

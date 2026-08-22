@@ -129,8 +129,12 @@ export async function buildWorkbook(tasks, project, progressOf){
     if (c.edit) style = bold ? S.EDIT_LB : (center ? S.EDIT_C : S.EDIT_L);
     else        style = bold ? (center ? S.LOCK_CB : S.LOCK_LB) : (center ? S.LOCK_C : S.LOCK_L);
     if (c.key === 'start' || c.key === 'end'){
+      // L4 만 직접 입력합니다. 상위 단계는 자식들의 범위로 자동 계산되므로
+      // 여기서 고쳐도 반영되지 않습니다. 그래서 회색(고정)으로 칠합니다.
+      const editable = t.level === 4;
       const ser = excelSerial(v);
-      return ser ? { v: ser, s: S.DATE_EDIT, t: 'n' } : { v: '', s: S.DATE_EDIT };
+      const st = editable ? S.DATE_EDIT : S.DATE_LOCK;
+      return ser ? { v: ser, s: st, t: 'n' } : { v: '', s: st };
     }
     const numeric = (c.key === 'level' || c.key === 'days' || c.key === 'progress');
     return { v, s: style, t: numeric && v !== '' ? 'n' : undefined };
@@ -199,7 +203,9 @@ export async function buildWorkbook(tasks, project, progressOf){
     [P(''), P('행 순서를 바꾸거나 정렬해도 됩니다. WBS 코드로 찾아갑니다.')],
     [P(''), P('날짜는 2026-09-01 형식. 엑셀 날짜 서식도 인식합니다.')],
     [P(''), P('진척률은 0~100. 상태는 드롭다운에서 고릅니다.')],
-    [P(''), P('L4 Task 의 진척률만 넣으세요. 상위 단계는 자동 계산됩니다.')],
+    [P(''), P('L4 Task 의 진척률과 날짜만 넣으세요.')],
+    [P(''), P('상위 단계(L1~L3)의 계획시작·계획종료는 자식 Task 들의 범위로 자동 계산됩니다.')],
+    [P(''), P('그래서 상위 단계의 날짜 칸은 회색(고정)이고, 고쳐도 반영되지 않습니다.')],
     [P(''), P('일수는 주말과 공휴일을 뺀 영업일입니다. NETWORKDAYS 수식이라 날짜를 고치면 스스로 다시 계산됩니다.')],
     [P(''), P(`공휴일은 [${HOL_SHEET}] 시트에 있습니다. 기간이 늘어나면 거기에 날짜를 더하세요.`)],
     [P(''), P('진척률은 이 엑셀에서만 고칠 수 있습니다. 앱 화면에서는 막대로만 보입니다.')],
@@ -270,6 +276,7 @@ export function diff(rows, tasks){
   const updates = [];      // { code, name, changes:[{field,label,from,to}] }
   const adds = [];
   const problems = [];     // { row, code, msg }
+  const ignored = [];      // 상위 단계 날짜처럼 자동 계산이라 반영하지 않은 것
 
   rows.forEach((r, i) => {
     const line = i + 2;    // 머리글이 1행
@@ -321,7 +328,13 @@ export function diff(rows, tasks){
           msg:`${head} '${txt(r[head])}' 를 날짜로 읽을 수 없습니다. 셀 서식을 '날짜' 로 바꾸거나 2026-09-01 형식으로 적어 주세요.` });
         continue;
       }
-      if (d) push(key, head, cur[key], d);
+      if (!d || d === cur[key]) continue;
+      if (cur.level !== 4){
+        // 상위 단계 날짜는 자식에서 자동 계산됩니다. 말없이 버리지 않고 알려줍니다.
+        ignored.push({ row:line, code, name:cur.name, head, from:cur[key], to:d });
+        continue;
+      }
+      push(key, head, cur[key], d);
     }
 
     if (cur.level === 4){
@@ -338,5 +351,5 @@ export function diff(rows, tasks){
   });
 
   const removes = tasks.filter(t => !seen.has(t.code));
-  return { updates, adds, removes, problems, matched: seen.size };
+  return { updates, adds, removes, problems, ignored, matched: seen.size };
 }

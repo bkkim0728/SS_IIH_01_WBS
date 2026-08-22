@@ -10,6 +10,7 @@ const CFG_KEY  = 'wbshub.config';
 const DATA_KEY = 'wbshub.tasks.' + PROJECT.code;
 const LOG_KEY  = 'wbshub.log.' + PROJECT.code;
 const AGENDA_KEY = 'wbshub.agenda.' + PROJECT.code;
+const MS_KEY     = 'wbshub.milestones.' + PROJECT.code;
 
 /* --- 설정 --------------------------------------------------------- */
 
@@ -176,9 +177,10 @@ function pushLocalLog(entry){
 export const state = {
   mode: 'local',        // 'supabase' | 'local'
   project: { ...PROJECT },
-  milestones: MILESTONES.map(m => ({ ...m })),
+  milestones: [],
   agenda: [],
   agendaLocal: true,      // Supabase 에 agenda 테이블이 없으면 브라우저에 저장
+  milestoneLocal: true,
   weights: PHASE_WEIGHT,
   tasks: [],
   error: null
@@ -210,10 +212,14 @@ export async function load(){
         }));
         recalcParents();
         await loadAgenda();
-        if (ms && ms.length) state.milestones = ms.map(m => ({
-          name: m.name, start: m.start_date, end: m.end_date,
-          note: m.note || '', adjusted: /보정/.test(m.note || '')
-        }));
+        if (ms && ms.length){
+          state.milestones = ms.map(m => ({
+            id: m.id, name: m.name, start: m.start_date, end: m.end_date,
+            note: m.note || '', kind: m.kind === 'sub' ? 'sub' : 'main',
+            adjusted: /보정/.test(m.note || '')
+          })).sort(msSort);
+          state.milestoneLocal = false;
+        } else loadLocalMilestones();
         return state;
       }
       state.error = 'Supabase 는 연결됐지만 tasks 테이블이 비어 있습니다. seed.sql 을 실행하세요.';
@@ -224,6 +230,7 @@ export async function load(){
   state.mode = 'local';
   state.tasks = localTasks();
   recalcParents();
+  loadLocalMilestones();
   await loadAgenda();
   return state;
 }
@@ -572,4 +579,201 @@ export async function reorderAgenda(id, toIndex){
 export function resetAgenda(){
   localStorage.removeItem(AGENDA_KEY);
   state.agenda = seedAgenda();
+}
+
+
+/* ==================================================================
+   WBS 번호 다시 매기기
+   추가·삭제를 거치면 2.1.1.2 처럼 중간이 비거나 순서가 어긋납니다.
+   현재 순서를 그대로 두고 번호만 1부터 촘촘히 다시 붙입니다.
+   ================================================================== */
+
+/* 코드를 숫자 마디로 비교 (2.1.10 이 2.1.2 뒤로 가게) */
+export function cmpWbs(a, b){
+  const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++){
+    const d = (pa[i] ?? -1) - (pb[i] ?? -1);
+    if (d) return d;
+  }
+  return 0;
+}
+
+/* 새 번호를 계산만 해서 돌려줍니다. 아직 반영하지 않습니다.
+   renumberTop=false 면 L1 코드(2,3,4…)는 그대로 두고 그 아래만 다시 매깁니다. */
+export function planRenumber(renumberTop = false){
+  const sorted = [...state.tasks].sort((x, y) => cmpWbs(x.code, y.code));
+  const map = new Map();            // 옛 코드 -> 새 코드
+
+  const walk = (parentOld, parentNew, level) => {
+    const kids = sorted.filter(t => t.level === level && (t.parent || '') === parentOld);
+    kids.forEach((t, i) => {
+      const seg = String(i + 1);
+      const code = parentNew ? `${parentNew}.${seg}` : seg;
+      map.set(t.code, code);
+      walk(t.code, code, level + 1);
+    });
+  };
+
+  if (renumberTop){
+    walk('', '', 1);
+  } else {
+    const tops = sorted.filter(t => t.level === 1);
+    tops.forEach(t => { map.set(t.code, t.code); walk(t.code, t.code, 2); });
+  }
+
+  const changes = [];
+  for (const t of sorted){
+    const to = map.get(t.code);
+    if (to && to !== t.code) changes.push({ from: t.code, to, name: t.name, level: t.level });
+  }
+  return { map, changes };
+}
+
+/* 계산한 새 번호를 실제로 반영합니다. */
+export async function applyRenumber(map){
+  const snapshot = state.tasks.map(t => ({ ...t }));
+  try {
+    // 1) 화면 상태 먼저 바꿉니다
+    for (const t of state.tasks){
+      const to = map.get(t.code);
+      if (to) t.code = to;
+    }
+    for (const t of state.tasks){
+      t.parent = t.code.includes('.') ? t.code.replace(/\.[^.]+$/, '') : '';
+    }
+    state.tasks.sort((a, b) => cmpWbs(a.code, b.code));
+
+    // 2) Supabase 에 반영합니다.
+    //    코드가 열쇠라서 겹치지 않게 임시 코드를 거쳐 두 번에 나눠 씁니다.
+    if (state.mode === 'supabase'){
+      const moves = [...map.entries()].filter(([from, to]) => from !== to);
+      for (const [from] of moves){
+        await sb(`tasks?code=eq.${encodeURIComponent(from)}`,
+                 { method:'PATCH', body: JSON.stringify({ code: '~tmp~' + from }) });
+      }
+      for (const [from, to] of moves){
+        const t = state.tasks.find(x => x.code === to);
+        await sb(`tasks?code=eq.${encodeURIComponent('~tmp~' + from)}`, {
+          method:'PATCH',
+          body: JSON.stringify({ code: to, parent_code: t ? (t.parent || null) : null })
+        });
+      }
+    } else {
+      localStorage.setItem(DATA_KEY, JSON.stringify(state.tasks));
+      pushLocalLog({
+        at: new Date().toISOString(), code: '번호정리',
+        name: `${[...map.entries()].filter(([a,b]) => a !== b).length}건 번호 변경`,
+        fromProgress: 0, toProgress: 0, fromStatus: 'not_started', toStatus: 'in_progress'
+      });
+    }
+    recalcParents();
+    return true;
+  } catch (e){
+    state.tasks = snapshot;
+    throw e;
+  }
+}
+
+/* 번호에 빈자리가 있는지 (안내용) */
+export function hasGaps(){
+  return planRenumber(false).changes.length > 0;
+}
+
+
+/* ==================================================================
+   마일스톤
+   main = 큰 마디 (착수 / 개발 종료 / Grand Open …)
+   sub  = 그 사이의 작은 마디 (중간보고, 산출물 검토 …)
+   ================================================================== */
+export function msSort(a, b){
+  const ka = a.end || a.start || '9999', kb = b.end || b.start || '9999';
+  return ka < kb ? -1 : ka > kb ? 1 : 0;
+}
+
+function seedMilestones(){
+  return MILESTONES.map((m, i) => ({
+    id: 'ms' + (i + 1), name: m.name, start: m.start || '', end: m.end || '',
+    note: m.note || '', kind: 'main', adjusted: !!m.adjusted
+  })).sort(msSort);
+}
+
+function loadLocalMilestones(){
+  state.milestoneLocal = true;
+  try {
+    const a = JSON.parse(localStorage.getItem(MS_KEY) || 'null');
+    if (Array.isArray(a)){ state.milestones = a.sort(msSort); return; }
+  } catch (_) {}
+  state.milestones = seedMilestones();
+}
+
+function saveLocalMilestones(){
+  localStorage.setItem(MS_KEY, JSON.stringify(state.milestones));
+}
+
+const msId = () => 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+
+function msRow(m){
+  return {
+    project_id: _projectId, name: m.name,
+    start_date: m.start || null, end_date: m.end || null,
+    note: m.note || '', kind: m.kind || 'main', sort_order: 0
+  };
+}
+
+export async function addMilestone(data){
+  const m = {
+    id: msId(), name: String(data.name || '').trim(),
+    start: data.start || '', end: data.end || '',
+    note: data.note || '', kind: data.kind === 'sub' ? 'sub' : 'main'
+  };
+  if (!m.name) throw new Error('이름을 적어 주세요.');
+  if (!m.end && !m.start) throw new Error('날짜를 적어 주세요.');
+
+  if (!state.milestoneLocal){
+    await getProjectId();
+    const rows = await sb('milestones', { method:'POST', body: JSON.stringify(msRow(m)) });
+    if (rows && rows[0]) m.id = rows[0].id;
+  }
+  state.milestones.push(m);
+  state.milestones.sort(msSort);
+  if (state.milestoneLocal) saveLocalMilestones();
+  return m;
+}
+
+export async function updateMilestone(id, patch){
+  const m = state.milestones.find(x => x.id === id);
+  if (!m) return null;
+  const before = { ...m };
+  Object.assign(m, patch);
+  if (!m.name){ Object.assign(m, before); throw new Error('이름은 비울 수 없습니다.'); }
+  try {
+    if (!state.milestoneLocal){
+      await sb(`milestones?id=eq.${encodeURIComponent(id)}`, {
+        method:'PATCH',
+        body: JSON.stringify({
+          name: m.name, start_date: m.start || null, end_date: m.end || null,
+          note: m.note || '', kind: m.kind
+        })
+      });
+    } else saveLocalMilestones();
+  } catch (e){ Object.assign(m, before); throw e; }
+  state.milestones.sort(msSort);
+  return m;
+}
+
+export async function deleteMilestone(id){
+  const i = state.milestones.findIndex(x => x.id === id);
+  if (i < 0) return false;
+  const [removed] = state.milestones.splice(i, 1);
+  try {
+    if (!state.milestoneLocal){
+      await sb(`milestones?id=eq.${encodeURIComponent(id)}`, { method:'DELETE' });
+    } else saveLocalMilestones();
+  } catch (e){ state.milestones.splice(i, 0, removed); throw e; }
+  return true;
+}
+
+export function resetMilestones(){
+  localStorage.removeItem(MS_KEY);
+  state.milestones = seedMilestones();
 }

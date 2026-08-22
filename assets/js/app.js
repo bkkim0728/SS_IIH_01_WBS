@@ -3,6 +3,7 @@
    ================================================================== */
 import * as store from './store.js';
 import * as excel from './excel.js';
+import * as cal from './calendar.js';
 import { state } from './store.js';
 
 /* ---------- 유틭 ---------- */
@@ -13,7 +14,15 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
 const D = s => s ? new Date(s + 'T00:00:00') : null;
 const fmt = s => s ? s.slice(2).replace(/-/g,'.') : '—';
 const clamp = (n,a,b) => Math.max(a, Math.min(b, n));
+const iso = d => { const p=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; };
 const DAY = 864e5;
+
+const DATE_SRC = {
+  file:   '원본 엑셀에 있던 날짜',
+  auto:   '마일스톤 구간 안에서 자동 배치한 날짜',
+  rollup: '하위 Task 범위에서 자동 계산'
+};
 
 const STATUS = {
   not_started:{ label:'미착수', cls:'' },
@@ -35,6 +44,8 @@ const ICON = {
   up:'<path d="M12 21V8M6 12l6-6 6 6M4 3h16"/>',
   sheet:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/>',
   trash:'<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/>',
+  cal:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  hash:'<path d="M4 9h16M4 15h16M10 3L8 21M16 3l-2 18"/>',
   grip:'<circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/>'
 };
 const svg = (d, w = 18) =>
@@ -99,7 +110,7 @@ function renderTop(){
   $('#topbar').innerHTML = `
     <div>
       <h1>${esc(state.project.name)}</h1>
-      <div class="sub">${esc(state.project.code)} · ${esc(state.project.version)}
+      <div class="sub">${esc(state.project.version)}
         · ${fmt(state.project.start)} → ${fmt(state.project.end)}</div>
     </div>
     <div class="topbar-right">
@@ -122,7 +133,9 @@ function renderTop(){
 
 /* ---------- 마일스톤 스파인 ---------- */
 function renderSpine(){
-  const ms = state.milestones.filter(m => m.start || m.end);
+  const all = state.milestones.filter(m => m.start || m.end);
+  const ms = all.filter(m => m.kind !== 'sub');
+  const subs = all.filter(m => m.kind === 'sub');
   const anchor = m => D(m.end || m.start);
   const nextIdx = ms.findIndex(m => anchor(m) >= today);
   const donePct = nextIdx < 0 ? 100 : (nextIdx / Math.max(ms.length - 1, 1)) * 100;
@@ -130,11 +143,25 @@ function renderSpine(){
   $('#spine').innerHTML = `
     <div class="spine-head">
       <h2>Milestone</h2>
-      <em>${ms.length}개 · ${WEEKS}주 여정</em>
+      <em>Main ${ms.length}${subs.length ? ` · Sub ${subs.length}` : ''} · ${WEEKS}주 여정</em>
+      <button class="btn ghost spine-edit" id="msManage">관리</button>
     </div>
     <div class="spine-track">
       <div class="spine-line"></div>
       <div class="spine-done" style="width:${donePct}%"></div>
+      ${(() => {
+        if (!subs.length || !ms.length) return '';
+        const a = D(ms[0].end || ms[0].start), z = D(ms[ms.length-1].end || ms[ms.length-1].start);
+        const span = z - a;
+        if (span <= 0) return '';
+        return subs.map(m => {
+          const at = D(m.end || m.start);
+          const left = clamp((at - a) / span * 100, 0, 100);
+          return `<div class="ms-sub ${at < today ? 'past' : ''}" style="left:${left}%"
+                       title="${esc(m.name)}${m.note ? ' · ' + esc(m.note) : ''} (${fmt(m.end || m.start)})">
+                    <b>${esc(m.name)}</b><i></i></div>`;
+        }).join('');
+      })()}
       ${ms.map((m,i) => {
         const left = (i / Math.max(ms.length - 1, 1)) * 100;
         const cls = i < nextIdx || nextIdx < 0 ? 'past' : i === nextIdx ? 'next' : '';
@@ -274,6 +301,10 @@ function viewTree(){
     <div class="spacer" style="flex:1"></div>
     <button class="btn" id="exportXlsx">${svg(ICON.down,14)} 엑셀 내려받기</button>
     <button class="btn primary" id="importXlsx">${svg(ICON.up,14)} 엑셀 올리기</button>
+    <button class="btn ${store.hasGaps() ? 'warn' : 'ghost'}" id="renumber"
+            title="추가·삭제로 생긴 번호의 빈자리를 메웁니다">
+      ${svg(ICON.hash,14)} 번호 정리${store.hasGaps() ? ' <span class="dotmark"></span>' : ''}
+    </button>
     <input type="file" id="xlsxFile" accept=".xlsx,.xls" hidden>
   </div>
 
@@ -339,8 +370,8 @@ function treeRows(){
         ${t.note ? `<span class="badge b-amber" title="${esc(t.note)}">메모</span>` : ''}
         ${overdue ? `<span class="badge b-rose">초과</span>` : ''}
       </div>
-      <div class="r-date ${t.dateSource==='auto'?'auto':''}">${fmt(t.start)}</div>
-      <div class="r-date ${t.dateSource==='auto'?'auto':''}">${fmt(t.end)}</div>
+      <div class="r-date" title="계획시작 ${fmt(t.start)} · ${DATE_SRC[t.dateSource] || ''}">${fmt(t.start)}</div>
+      <div class="r-date" title="계획종료 ${fmt(t.end)} · ${DATE_SRC[t.dateSource] || ''}">${fmt(t.end)}</div>
       <div class="r-prog">
         <div class="bar"><i class="${pr>=100?'full':pr===0?'zero':''}" style="width:${pr}%"></i></div>
         <span class="pct">${pr}%</span>
@@ -434,6 +465,177 @@ function viewGantt(){
       }).join('')}
     </div>
   </div></div></div>`;
+}
+
+
+/* ==================================================================
+   VIEW — 스케줄 달력
+   ================================================================== */
+let calYm = null;          // 'YYYY-MM'. 처음에는 오늘이 속한 달(프로젝트 기간 안으로 보정)
+let calFilter = { phase:'', status:'', level:'4' };
+
+function calInit(){
+  if (calYm) return;
+  const ps = D(state.project.start), pe = D(state.project.end);
+  const base = today < ps ? ps : today > pe ? pe : today;
+  calYm = `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2,'0')}`;
+}
+
+function shiftMonth(delta){
+  const [y, m] = calYm.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  calYm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,'0')}`;
+}
+
+function calTasks(){
+  // 고른 단계의 Task 만 그린다. 상위까지 같이 그리면 막대가 달 전체를 덮어
+  // 정작 보고 싶은 Task 가 밀려난다.
+  const lv = +calFilter.level;
+  return state.tasks.filter(t => {
+    if (t.level !== lv) return false;
+    if (calFilter.phase && t.code.split('.')[0] !== calFilter.phase) return false;
+    if (calFilter.status){
+      if (t.level === 4) { if (t.status !== calFilter.status) return false; }
+      else if (!leavesOf(t.code).some(k => k.status === calFilter.status)) return false;
+    }
+    return true;
+  });
+}
+
+function viewCalendar(){
+  calInit();
+  const [year, month] = calYm.split('-').map(Number);
+
+  const weeks = cal.buildWeeks(year, month);
+  const inMonth = cal.tasksInMonth(calTasks(), year, month);
+  const overflow = cal.layoutBars(weeks, inMonth, +calFilter.level === 4 ? 5 : 4);
+  const hols = cal.holidaysInMonth(year, month);
+  const stones = cal.milestonesInMonth(state.milestones, year, month);
+  const stoneBy = stones.reduce((a, m) => ((a[m.at] = a[m.at] || []).push(m), a), {});
+
+  const phases = state.tasks.filter(t => t.level === 1);
+  const monthStart = `${year}-${String(month).padStart(2,'0')}-01`;
+
+  const cell = (c, idx) => {
+    if (!c) return `<div class="cal-col empty"></div>`;
+    const cls = [
+      c.date === iso(today) ? 'is-today' : '',
+      c.holiday ? (c.holiday.temp ? 'is-temp' : 'is-holiday') : '',
+      idx === 0 ? 'sun' : idx === 6 ? 'sat' : ''
+    ].join(' ');
+    return `<div class="cal-col ${cls}"></div>`;
+  };
+
+  const headCell = (c, idx) => {
+    if (!c) return `<div class="cal-head-cell" style="grid-column:${idx+1};grid-row:1"></div>`;
+    const numCls = c.holiday && !c.holiday.temp ? 'holiday'
+                 : c.holiday ? 'temp' : idx === 0 ? 'sun' : idx === 6 ? 'sat' : '';
+    const ms = stoneBy[c.date] || [];
+    return `
+      <div class="cal-head-cell" style="grid-column:${idx+1};grid-row:1">
+        <div class="cal-daynum ${numCls} ${c.date === iso(today) ? 'today' : ''}">${c.day}</div>
+        ${c.holiday ? `<div class="cal-hol ${c.holiday.temp ? 'temp' : ''}" title="${esc(c.holiday.name)}">${esc(c.holiday.name)}</div>` : ''}
+        ${ms.map(m => `<div class="cal-ms" title="마일스톤 · ${esc(m.note || m.name)}">◆ ${esc(m.name)}</div>`).join('')}
+      </div>`;
+  };
+
+  const bar = b => {
+    const pr = progressOf(b);
+    const kids = leavesOf(b.code);
+    const blocked = b.level === 4 ? b.status === 'blocked' : kids.some(k => k.status === 'blocked');
+    const st = blocked ? 'blocked' : pr >= 100 ? 'done' : pr > 0 ? 'wip' : 'todo';
+    return `
+      <button class="cal-bar s-${st} ${b.cutLeft?'cut-l':''} ${b.cutRight?'cut-r':''}"
+              data-cal-task="${esc(b.code)}"
+              style="grid-column:${b.from} / ${b.to};grid-row:${b.lane + 2}"
+              title="${esc(b.code)} ${esc(b.name)}&#10;${fmt(b.start)} → ${fmt(b.end)} · ${pr}%">
+        ${b.cutLeft ? '<span class="cb-arrow">◀</span>' : ''}
+        <span class="cb-text"><b>${esc(b.code)}</b> ${esc(b.name)}</span>
+        ${b.cutRight ? '<span class="cb-arrow">▶</span>' : ''}
+      </button>`;
+  };
+
+  const noData = !cal.hasHolidayData(year);
+
+  return `
+  <div class="view-head">
+    <div class="cal-nav">
+      <button class="btn ghost" id="calPrev" aria-label="이전 달">←</button>
+      <h2 class="cal-title">${year}년 ${month}월</h2>
+      <button class="btn ghost" id="calNext" aria-label="다음 달">→</button>
+      <button class="btn ghost" id="calToday">오늘</button>
+    </div>
+    <div class="spacer"></div>
+    <select class="input" id="calPhase" style="width:150px">
+      <option value="">전체 단계</option>
+      ${phases.map(p => `<option value="${esc(p.code)}" ${calFilter.phase===p.code?'selected':''}>${esc(p.name)}</option>`).join('')}
+    </select>
+    <select class="input" id="calStatus" style="width:126px">
+      <option value="">전체 상태</option>
+      ${Object.entries(STATUS).map(([k,v]) => `<option value="${k}" ${calFilter.status===k?'selected':''}>${v.label}</option>`).join('')}
+    </select>
+    <select class="input" id="calLevel" style="width:126px">
+      <option value="4" ${calFilter.level==='4'?'selected':''}>L4 Task만</option>
+      <option value="3" ${calFilter.level==='3'?'selected':''}>L3 그룹만</option>
+      <option value="2" ${calFilter.level==='2'?'selected':''}>L2 모듈만</option>
+      <option value="1" ${calFilter.level==='1'?'selected':''}>L1 단계만</option>
+    </select>
+  </div>
+
+  ${noData ? `<div class="note" style="margin-bottom:14px">
+    ${cal.FIRST_YEAR}~${cal.LAST_YEAR}년 공휴일만 등록되어 있어 이 달은 공휴일이 표시되지 않습니다.
+    <span class="mono">assets/js/holidays.js</span> 에 연도를 더하면 표시됩니다.
+  </div>` : ''}
+
+  <div class="calendar">
+    <div class="cal-weekdays">
+      ${cal.WEEKDAYS.map((d,i) => `<div class="${i===0?'sun':i===6?'sat':''}">${d}</div>`).join('')}
+    </div>
+    ${weeks.map((w, wi) => `
+      <div class="cal-week">
+        <div class="cal-cols" aria-hidden="true">${w.cells.map(cell).join('')}</div>
+        <div class="cal-fg">
+          ${w.cells.map(headCell).join('')}
+          ${w.bars.map(bar).join('')}
+          ${overflow.has(wi) ? `<div class="cal-more" style="grid-column:1/8;grid-row:6">외 ${overflow.get(wi)}건 더 있습니다 · 필터로 좁혀 보세요</div>` : ''}
+        </div>
+      </div>`).join('')}
+  </div>
+
+  <div class="cal-legend">
+    <span class="lg"><i class="lg-chip s-todo"></i>미착수</span>
+    <span class="lg"><i class="lg-chip s-wip"></i>진행중</span>
+    <span class="lg"><i class="lg-chip s-done"></i>완료</span>
+    <span class="lg"><i class="lg-chip s-blocked"></i>지연</span>
+    <span class="lg-sep"></span>
+    <span class="lg"><i class="lg-chip lg-hol"></i>공휴일</span>
+    <span class="lg"><i class="lg-chip lg-temp"></i>임시공휴일</span>
+    <span class="lg">◆ 마일스톤</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="hint">이 달 Task ${inMonth.length}건 · 막대를 누르면 WBS 트리에서 찾아 줍니다</span>
+  </div>
+
+  ${(stones.length || hols.length) ? `
+  <div class="grid g-2" style="margin-top:16px">
+    ${stones.length ? `<div class="card">
+      <h3>이 달의 마일스톤</h3>
+      ${stones.map(m => `<div class="phase-row">
+        <span class="dot ${D(m.at) < today ? 'live' : 'local'}"></span>
+        <div class="pn">${esc(m.name)}<small>${esc(m.note || '')}</small></div>
+        <div class="pw">${fmt(m.at)}</div>
+        <div class="pp">${D(m.at) >= today ? 'D-' + Math.ceil((D(m.at) - today) / DAY) : '지남'}</div>
+      </div>`).join('')}
+    </div>` : '<div></div>'}
+    ${hols.length ? `<div class="card">
+      <h3>이 달의 공휴일</h3>
+      ${hols.map(h => `<div class="phase-row">
+        <code class="${h.temp ? 'temp' : 'hol'}">${month}/${h.day}</code>
+        <div class="pn">${esc(h.name)}</div>
+        <div class="pw">${cal.WEEKDAYS[D(h.date).getDay()]}요일</div>
+        <div class="pp mono" style="font-size:11px;color:var(--muted)">${[0,6].includes(D(h.date).getDay()) ? '주말' : '평일'}</div>
+      </div>`).join('')}
+    </div>` : ''}
+  </div>` : ''}`;
 }
 
 /* ==================================================================
@@ -565,6 +767,169 @@ function exportJson(){
 
 
 
+
+
+
+/* ==================================================================
+   마일스톤 관리
+   ================================================================== */
+let msEditing = null;      // 수정 중인 id, 'new' 면 새로 등록
+
+function msForm(m){
+  const v = m || { id:'new', name:'', start:'', end:'', note:'', kind:'main' };
+  return `
+    <div class="ms-form">
+      <div class="ms-form-grid">
+        <div class="field"><label>이름</label>
+          <input class="input" id="msName" value="${esc(v.name)}" maxlength="60" placeholder="예: 중간보고"></div>
+        <div class="field"><label>종류</label>
+          <select class="input" id="msKind">
+            <option value="main" ${v.kind!=='sub'?'selected':''}>Main · 큰 마디</option>
+            <option value="sub"  ${v.kind==='sub'?'selected':''}>Sub · 작은 마디</option>
+          </select></div>
+        <div class="field"><label>시작 (선택)</label>
+          <input class="input" id="msStart" type="date" value="${esc(v.start||'')}"></div>
+        <div class="field"><label>기준일</label>
+          <input class="input" id="msEnd" type="date" value="${esc(v.end||v.start||'')}"></div>
+      </div>
+      <div class="field" style="margin-top:10px"><label>메모 (선택)</label>
+        <input class="input" id="msNote" value="${esc(v.note||'')}" maxlength="120" placeholder="예: 11/20 산출물 품질 검토"></div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn primary" id="msSave">${v.id==='new'?'등록':'저장'}</button>
+        <button class="btn ghost" id="msCancel">취소</button>
+      </div>
+    </div>`;
+}
+
+function msList(){
+  const items = state.milestones;
+  const row = m => {
+    const at = m.end || m.start;
+    const past = at && D(at) < today;
+    return msEditing === m.id ? `<div class="ms-item editing">${msForm(m)}</div>` : `
+      <div class="ms-item ${m.kind === 'sub' ? 'is-sub' : ''}">
+        <span class="ms-mark ${past ? 'past' : ''}">${m.kind === 'sub' ? '◇' : '◆'}</span>
+        <div class="ms-body">
+          <b>${esc(m.name)}</b>
+          <span class="badge ${m.kind==='sub'?'':'b-signal'}">${m.kind==='sub'?'Sub':'Main'}</span>
+          ${m.note ? `<small>${esc(m.note)}</small>` : ''}
+        </div>
+        <span class="ms-date mono">${m.start && m.start !== m.end ? fmt(m.start) + ' ~ ' : ''}${fmt(at)}</span>
+        <span class="ms-dday mono">${at ? (past ? '지남' : 'D-' + Math.ceil((D(at) - today) / DAY)) : '—'}</span>
+        <span class="acts">
+          <button class="ag-btn" data-ms-edit="${esc(m.id)}" title="수정">${svg(ICON.cog,12)}</button>
+          <button class="ag-btn del" data-ms-del="${esc(m.id)}" title="삭제">${svg(ICON.trash,12)}</button>
+        </span>
+      </div>`;
+  };
+  return `
+    <div class="ms-list">
+      ${items.length ? items.map(row).join('') : '<div class="empty"><b>등록된 마일스톤이 없습니다</b>아래에서 추가하세요.</div>'}
+    </div>
+    ${msEditing === 'new' ? msForm(null)
+      : `<button class="btn" id="msAdd" style="margin-top:12px">＋ 마일스톤 추가</button>`}`;
+}
+
+function openMsManager(){
+  msEditing = null;
+  openModal({
+    title: '마일스톤 관리',
+    sub: `${state.milestoneLocal ? '이 브라우저에만 저장됩니다' : '팀 전체가 함께 봅니다'}`,
+    body: `<div id="msBody">${msList()}</div>`,
+    applyLabel: '닫기',
+    onApply: null
+  });
+}
+
+function paintMs(){
+  const box = $('#msBody');
+  if (box) box.innerHTML = msList();
+}
+
+async function msAction(fn){
+  try {
+    await fn();
+    msEditing = null;
+    paintMs();
+    renderSpine();
+    if (current === 'calendar' || current === 'dashboard') await renderView();
+  } catch (e){
+    toast('마일스톤 저장 실패: ' + e.message, true);
+  }
+}
+
+function msRead(){
+  return {
+    name: $('#msName')?.value || '',
+    kind: $('#msKind')?.value || 'main',
+    start: $('#msStart')?.value || '',
+    end: $('#msEnd')?.value || $('#msStart')?.value || '',
+    note: $('#msNote')?.value || ''
+  };
+}
+
+/* ==================================================================
+   WBS 번호 다시 매기기
+   ================================================================== */
+function confirmRenumber(top = false){
+  const plan = store.planRenumber(top);
+  const n = plan.changes.length;
+
+  openModal({
+    title: 'WBS 번호 정리',
+    sub: n ? `${n}건의 번호가 바뀝니다` : '바꿀 번호가 없습니다',
+    applyLabel: `${n}건 적용`,
+    onApply: n ? async () => {
+      const btn = $('#modalApply');
+      btn.disabled = true; btn.textContent = '적용 중…';
+      try {
+        await store.applyRenumber(plan.map);
+        selected.clear();
+        closePreview();
+        await refresh();
+        toast(`${n}건의 번호를 정리했습니다.`);
+      } catch (e){
+        btn.disabled = false; btn.textContent = '다시 시도';
+        toast('번호 정리 실패: ' + e.message, true);
+      }
+    } : null,
+    body: `
+      <div class="note" style="margin-bottom:14px">
+        <b>순서는 그대로 두고 번호만 다시 붙입니다.</b>
+        추가·삭제로 <span class="mono">2.1.1.2</span> 같은 자리가 비었을 때 씁니다.
+        작업명·날짜·진척은 건드리지 않습니다.
+      </div>
+
+      <label class="rn-opt">
+        <input type="checkbox" id="rnTop" ${top ? 'checked' : ''}>
+        <span>L1 단계 번호도 다시 매기기
+          <small>지금은 ${state.tasks.filter(t => t.level === 1).map(t => t.code).join(', ')}
+          → 1, 2, 3… 으로 바뀝니다. 단계 번호를 이미 공유하셨다면 꺼 두세요.</small>
+        </span>
+      </label>
+
+      ${n ? `
+        <div class="chg-list" style="margin-top:14px">
+          ${plan.changes.slice(0, 80).map(c => `
+            <div class="chg">
+              <code>L${c.level}</code>
+              <div style="font-size:12.5px">
+                <span class="mono" style="color:var(--muted)">${esc(c.from)}</span>
+                <span style="color:var(--muted)"> → </span>
+                <b class="mono" style="color:var(--signal-2)">${esc(c.to)}</b>
+                <span style="margin-left:8px">${esc(c.name)}</span>
+              </div>
+            </div>`).join('')}
+          ${n > 80 ? `<div class="chg" style="color:var(--muted)">외 ${n - 80}건</div>` : ''}
+        </div>` : `
+        <div class="empty"><b>번호가 이미 촘촘합니다</b>빈자리가 없습니다.</div>`}
+
+      ${n ? `<div class="note" style="margin-top:14px;border-left-color:var(--amber);background:var(--amber-bg);color:#E8D4AE">
+        <b>내려받아 두신 엑셀이 있다면</b> 번호가 달라져 맞지 않습니다.
+        정리한 뒤에 다시 내려받아 쓰세요.
+      </div>` : ''}`
+  });
+}
 
 /* ==================================================================
    공유 안건
@@ -830,6 +1195,7 @@ function openPreview(){
       ${chip(d.adds.length, '추가', 'b-mint')}
       ${chip(d.removes.length, '삭제 후보', 'b-amber')}
       ${chip(d.problems.length, '문제', 'b-rose')}
+      ${chip(d.ignored?.length || 0, '자동계산', 'b-amber')}
     </div>
 
     ${d.problems.length ? `
@@ -839,6 +1205,19 @@ function openPreview(){
           ${d.problems.slice(0,8).map(p =>
             `<li><span class="mono">${p.row}행 ${esc(p.code)}</span> ${esc(p.msg)}</li>`).join('')}
           ${d.problems.length > 8 ? `<li>외 ${d.problems.length - 8}건</li>` : ''}
+        </ul>
+      </div>` : ''}
+
+    ${d.ignored?.length ? `
+      <div class="note" style="margin-bottom:14px">
+        <b>반영하지 않은 날짜 ${d.ignored.length}건</b><br>
+        상위 단계(L1~L3)의 계획시작·계획종료는 <b>자식 Task 들의 범위로 자동 계산</b>됩니다.
+        여기를 고치는 대신 아래 L4 Task 의 날짜를 옮기면 상위가 따라옵니다.
+        <ul style="margin:8px 0 0;padding-left:18px">
+          ${d.ignored.slice(0,6).map(x =>
+            `<li><span class="mono">${x.row}행 ${esc(x.code)}</span>
+             ${esc(x.head)} ${esc(x.from || '')} → ${esc(x.to)}</li>`).join('')}
+          ${d.ignored.length > 6 ? `<li>외 ${d.ignored.length - 6}건</li>` : ''}
         </ul>
       </div>` : ''}
 
@@ -881,7 +1260,7 @@ function openPreview(){
           `<div class="chg"><code>${esc(r.code)}</code><div style="font-size:12.5px">${esc(r.name)}</div></div>`).join('')}
       </div>` : ''}
 
-    ${!total && !d.removes.length ? `
+    ${!total && !d.removes.length && !d.ignored?.length ? `
       <div class="empty"><b>바뀐 내용이 없습니다</b>
       엑셀 ${d.rowCount}행을 읽었고 ${d.matched}건이 기존 Task 와 일치합니다.</div>` : ''}
   `;
@@ -1031,6 +1410,7 @@ const VIEWS = {
   dashboard:   { label:'진척 현황', icon:ICON.dash,  render:viewDashboard },
   tree:        { label:'WBS 트리',  icon:ICON.tree,  render:viewTree },
   gantt:       { label:'일정 간트', icon:ICON.gantt, render:viewGantt },
+  calendar:    { label:'스케줄 달력', icon:ICON.cal,  render:viewCalendar },
   log:         { label:'변경 이력', icon:ICON.hist,  render:viewLog },
   settings:    { label:'설정',      icon:ICON.cog,   render:viewSettings }
 };
@@ -1080,6 +1460,25 @@ function bind(){
       return;
     }
 
+    const msBtn = e.target.closest('[data-ms-edit],[data-ms-del]');
+    if (msBtn){
+      const d = msBtn.dataset;
+      if (d.msEdit){ msEditing = d.msEdit; paintMs(); $('#msName')?.focus(); return; }
+      if (d.msDel){ await msAction(() => store.deleteMilestone(d.msDel)); return; }
+    }
+
+    const cb = e.target.closest('[data-cal-task]');
+    if (cb){
+      const code = cb.dataset.calTask;
+      filter = { q: code, status:'', level:'4' };
+      collapsed.clear();
+      current = 'tree';
+      await refresh();
+      window.scrollTo(0, 0);
+      toast(`${code} 를 WBS 트리에서 찾았습니다.`);
+      return;
+    }
+
     const ag = e.target.closest('[data-ag-open],[data-ag-del]');
     if (ag){
       const d = ag.dataset;
@@ -1092,6 +1491,17 @@ function bind(){
     if (!id) return;
     if (id === 'pickClear'){ selected.clear(); $('#rows').innerHTML = treeRows(); renderSelBar(); return; }
     if (id === 'pickDelete'){ confirmDelete(); return; }
+    if (id === 'renumber'){ confirmRenumber(false); return; }
+    if (id === 'msManage'){ openMsManager(); return; }
+    if (id === 'msAdd'){ msEditing = 'new'; paintMs(); $('#msName')?.focus(); return; }
+    if (id === 'msCancel'){ msEditing = null; paintMs(); return; }
+    if (id === 'msSave'){
+      const d = msRead();
+      await msAction(() => msEditing === 'new'
+        ? store.addMilestone(d)
+        : store.updateMilestone(msEditing, d));
+      return;
+    }
     if (id === 'expandAll'){ collapsed.clear(); $('#rows').innerHTML = treeRows(); renderSelBar(); }
     if (id === 'collapseAll'){
       state.tasks.filter(t => t.level === 2).forEach(t => collapsed.add(t.code));
@@ -1105,6 +1515,9 @@ function bind(){
       if (v && v.trim()) await agendaAction(() => store.addAgenda(v), true);
       return;
     }
+    if (id === 'calPrev'){ shiftMonth(-1); await renderView(); return; }
+    if (id === 'calNext'){ shiftMonth(1); await renderView(); return; }
+    if (id === 'calToday'){ calYm = null; calInit(); await renderView(); return; }
     if (id === 'writeTest') await runWriteTest();
     if (id === 'modalClose' || id === 'modalCancel') closePreview();
     if (id === 'modalApply' && modalAction) await modalAction();
@@ -1163,6 +1576,10 @@ function bind(){
     if (t.id === 'fStatus'){ filter.status = t.value; $('#rows').innerHTML = treeRows(); renderSelBar(); return; }
     if (t.id === 'fLevel'){ filter.level = t.value; $('#rows').innerHTML = treeRows(); renderSelBar(); return; }
     if (t.id === 'gDepth'){ ganttDepth = +t.value; await renderView(); return; }
+    if (t.id === 'rnTop'){ confirmRenumber(t.checked); return; }
+    if (t.id === 'calPhase'){ calFilter.phase = t.value; await renderView(); return; }
+    if (t.id === 'calStatus'){ calFilter.status = t.value; await renderView(); return; }
+    if (t.id === 'calLevel'){ calFilter.level = t.value; await renderView(); return; }
 
     if (t.dataset.status){
       const code = t.dataset.status;

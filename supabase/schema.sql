@@ -64,6 +64,7 @@ create table milestones (
   start_date  date,
   end_date    date,
   note        text default '',
+  kind        text not null default 'main' check (kind in ('main','sub')),
   sort_order  smallint default 0
 );
 
@@ -171,6 +172,8 @@ create policy "write all"  on milestones for update using (true) with check (tru
 
 -- 엑셀 업로드로 Task 를 추가·삭제하려면 필요합니다.
 create policy "insert tasks" on tasks    for insert with check (true);
+create policy "insert milestones" on milestones for insert with check (true);
+create policy "delete milestones" on milestones for delete using (true);
 create policy "delete tasks" on tasks    for delete using (true);
 
 -- 트리거가 남기는 로그. security definer 와 별개로 한 겹 더 열어 둡니다.
@@ -200,7 +203,7 @@ alter publication supabase_realtime add table milestones;
 -- ---------------------------------------------------------------------
 grant usage on schema public to anon, authenticated;
 grant select, insert, update, delete on tasks      to anon, authenticated;
-grant select, update                 on milestones to anon, authenticated;
+grant select, insert, update, delete on milestones to anon, authenticated;
 grant select                         on projects   to anon, authenticated;
 grant select, insert                 on task_log   to anon, authenticated;
 grant select, insert, update, delete on agenda     to anon, authenticated;

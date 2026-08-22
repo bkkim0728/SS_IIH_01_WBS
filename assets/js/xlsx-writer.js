@@ -123,7 +123,7 @@ export const S = {
   LOCK_L: 4, LOCK_C: 5,
   EDIT_LB: 6, LOCK_LB: 7, LOCK_CB: 8,
   TITLE: 9, SECTION: 10, PLAIN: 11, LABEL: 12,
-  DATE_EDIT: 13, DATE_PLAIN: 14
+  DATE_EDIT: 13, DATE_PLAIN: 14, DATE_LOCK: 15
 };
 
 const INK   = 'FF1B2233';
@@ -162,7 +162,7 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   </border>
 </borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="15">
+<cellXfs count="16">
   <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
   <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
   <xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1" applyProtection="1"><alignment horizontal="left" vertical="center"/><protection locked="0"/></xf>
@@ -178,6 +178,7 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>
   <xf numFmtId="164" fontId="0" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1" applyProtection="1"><alignment horizontal="center" vertical="center"/><protection locked="0"/></xf>
   <xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/>
+  <xf numFmtId="164" fontId="2" fillId="4" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;

@@ -102,6 +102,30 @@ function planned(){
   return Math.round(s / lv.length);
 }
 
+
+/* 어떤 Task 의 상태를 하나로 판정합니다.
+   트리·간트·달력이 모두 이 함수만 씁니다. 화면마다 따로 판정하면 서로 어긋납니다.
+
+   L4  : 저장된 status 그대로
+   상위 : 하위 리프를 보고 판정
+          지연이 하나라도 있으면      → 지연
+          진척률 평균 100            → 완료
+          진척률 평균 > 0            → 진행중
+          그 외                      → 미착수
+   종료일이 지난 미완료가 있으면 '초과' 로 따로 표시합니다. */
+function statusOf(t){
+  const pr = progressOf(t);
+  if (t.level === 4){
+    const late = t.status !== 'done' && D(t.end) && D(t.end) < today;
+    return { key: t.status, ...STATUS[t.status] || STATUS.not_started, pr, late, blockedCount: 0 };
+  }
+  const leaves = leavesOf(t.code);
+  const blockedCount = leaves.filter(k => k.status === 'blocked').length;
+  const lateCount = leaves.filter(k => k.status !== 'done' && D(k.end) && D(k.end) < today).length;
+  const key = blockedCount ? 'blocked' : pr >= 100 ? 'done' : pr > 0 ? 'in_progress' : 'not_started';
+  return { key, ...STATUS[key], pr, late: lateCount > 0, blockedCount, lateCount, leafCount: leaves.length };
+}
+
 /* ---------- 상단 ---------- */
 function renderTop(){
   const p = overall(), pl = planned();
@@ -354,8 +378,8 @@ function treeRows(){
     const pr = progressOf(t);
     const kid = t.level < 4 && children(t.code).length > 0;
     const open = !collapsed.has(t.code);
-    const st = STATUS[t.status] || STATUS.not_started;
-    const overdue = t.status !== 'done' && D(t.end) && D(t.end) < today;
+    const sm = statusOf(t);
+    const overdue = sm.late;
     return `
     <div class="row lv${t.level} ${selected.has(t.code)?'picked':''}" data-code="${esc(t.code)}"
          ${t.level === 1 ? `style="--phase:${phaseColor(t.code)}"` : ''}>
@@ -396,7 +420,10 @@ function treeRows(){
         ${t.level === 4
           ? `<select data-status="${esc(t.code)}">${Object.entries(STATUS).map(([k,v]) =>
               `<option value="${k}" ${t.status===k?'selected':''}>${v.label}</option>`).join('')}</select>`
-          : `<span class="badge ${st.cls}">${pr>=100?'완료':pr>0?'진행중':'미착수'}</span>`}
+          : `<span class="badge ${sm.cls}" title="${esc(
+                sm.blockedCount ? `하위 ${sm.leafCount}건 중 지연 ${sm.blockedCount}건`
+                                : `하위 ${sm.leafCount}건 평균 ${sm.pr}%`)}">${sm.label}${
+                sm.blockedCount ? ` ${sm.blockedCount}` : ''}</span>`}
       </div>
       <div class="r-days mono">${excel.bizDays(t.start, t.end) || '—'}</div>
     </div>`;
@@ -444,13 +471,6 @@ function viewGantt(){
     </select>
   </div>
 
-  <div class="note" style="margin-bottom:14px">
-    <b>날짜 출처</b>: 원본 시트에 계획일이 들어 있는 Task 는 4건입니다.
-    나머지는 마일스톤 구간 안에서 순서대로 자동 배치했고, 트리 화면에서 흐린 날짜로 표시됩니다.
-    실제 일정이 정해지면 그 위에 덮어쓰면 됩니다.
-    상위 단계 막대는 하위 Task 의 시작·종료를 그대로 따라가며, 하위에 지연이 있으면 함께 표시됩니다.
-  </div>
-
   <div class="gantt-wrap"><div class="gantt-scroll"><div class="gantt">
     <div class="g-head">
       <div class="g-months"><div class="g-corner"></div>${months.map(m =>
@@ -466,16 +486,16 @@ function viewGantt(){
         const s = D(t.start), e = D(t.end);
         if (!s || !e) return '';
         const l = pct(s), r = pct(new Date(e.getTime() + DAY));
-        const pr = progressOf(t);
-        const kids = leavesOf(t.code);
-        const blocked = t.level === 4
-          ? t.status === 'blocked'
-          : kids.some(k => k.status === 'blocked');
-        const late = kids.some(k => k.status !== 'done' && D(k.end) && D(k.end) < today);
+        const sm = statusOf(t);
+        const pr = sm.pr;
+        const blocked = sm.key === 'blocked';
+        const late = sm.late;
         const cls = blocked ? 'blocked' : pr >= 100 ? 'done' : '';
         const tip = `${t.name} · ${fmt(t.start)} → ${fmt(t.end)} · ${pr}%`
           + (blocked ? ' · 지연 포함' : late ? ' · 종료일 초과 포함' : '');
-        const pc = t.level === 1 ? phaseColor(t.code) : '';
+        // 단계 색을 모든 행에 실어 막대까지 같은 색으로 그립니다.
+        // 라벨 글자색은 L1 에만 입혀 계층이 흐려지지 않게 합니다.
+        const pc = phaseColor(t.code);
         return `<div class="g-row lv${t.level}" ${pc ? `style="--phase:${pc}"` : ''}>
           <div class="g-label indent-${t.level}">
             <code>${esc(t.code)}</code><span>${esc(t.name)}</span>
@@ -523,10 +543,7 @@ function calTasks(){
   return state.tasks.filter(t => {
     if (t.level !== lv) return false;
     if (calFilter.phase && t.code.split('.')[0] !== calFilter.phase) return false;
-    if (calFilter.status){
-      if (t.level === 4) { if (t.status !== calFilter.status) return false; }
-      else if (!leavesOf(t.code).some(k => k.status === calFilter.status)) return false;
-    }
+    if (calFilter.status && statusOf(t).key !== calFilter.status) return false;
     return true;
   });
 }
@@ -569,10 +586,10 @@ function viewCalendar(){
   };
 
   const bar = b => {
-    const pr = progressOf(b);
-    const kids = leavesOf(b.code);
-    const blocked = b.level === 4 ? b.status === 'blocked' : kids.some(k => k.status === 'blocked');
-    const st = blocked ? 'blocked' : pr >= 100 ? 'done' : pr > 0 ? 'wip' : 'todo';
+    const sm = statusOf(b);
+    const pr = sm.pr;
+    const st = sm.key === 'blocked' ? 'blocked'
+             : pr >= 100 ? 'done' : pr > 0 ? 'wip' : 'todo';
     return `
       <button class="cal-bar s-${st} ${b.cutLeft?'cut-l':''} ${b.cutRight?'cut-r':''}"
               data-cal-task="${esc(b.code)}"
@@ -1749,11 +1766,16 @@ function bind(){
     }
     if (t.dataset.status){
       const code = t.dataset.status;
-      const patch = { status: t.value };
+      const cur = state.tasks.find(x => x.code === code);
+      const wasPr = cur ? cur.progress : null;
       try {
-        await store.updateTask(code, patch);
+        const saved = await store.updateTask(code, { status: t.value });
         $('#rows').innerHTML = treeRows();
         renderTop();
+        // 진척률은 읽기 전용인데 상태를 바꾸면 따라 움직입니다.
+        // 조용히 바뀌면 값이 틀어진 것처럼 보이므로 알려 줍니다.
+        if (saved && wasPr !== null && saved.progress !== wasPr)
+          toast(`${code} 상태를 ${STATUS[t.value].label} 로 바꾸면서 진척률이 ${wasPr}% → ${saved.progress}% 가 됐습니다.`);
       } catch (err){ toast('저장 실패: ' + err.message, true); }
     }
   });

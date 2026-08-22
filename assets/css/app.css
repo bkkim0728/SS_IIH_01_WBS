@@ -371,9 +371,27 @@ select.input{ appearance:none; padding-right:28px;
    막대의 상태 색과 헷갈리지 않게 라벨 영역에서만 씁니다. */
 .g-row.lv1[style*="--phase"] .g-label span,
 .g-row.lv1[style*="--phase"] .g-label code{ color:var(--phase); }
-.g-row.lv1[style*="--phase"] .g-label{
-  box-shadow:inset 3px 0 0 var(--phase);
+.g-row[style*="--phase"] .g-label{ box-shadow:inset 3px 0 0 var(--phase); }
+.g-row.lv2[style*="--phase"] .g-label,
+.g-row.lv3[style*="--phase"] .g-label,
+.g-row.lv4[style*="--phase"] .g-label{ box-shadow:inset 2px 0 0 color-mix(in srgb, var(--phase) 45%, transparent); }
+
+/* 막대도 단계 색으로. 진행도는 채움 너비로, 지연은 빨강으로 계속 구분합니다. */
+.g-row[style*="--phase"] .g-bar{
+  background:color-mix(in srgb, var(--phase) 16%, transparent);
+  border-color:color-mix(in srgb, var(--phase) 55%, transparent);
 }
+.g-row[style*="--phase"] .g-bar > i{ background:var(--phase); opacity:.95; }
+.g-row[style*="--phase"] .g-bar.done{
+  background:color-mix(in srgb, var(--phase) 26%, transparent);
+  border-color:var(--phase);
+}
+.g-row[style*="--phase"] .g-bar.done > i{ background:var(--phase); }
+/* 지연은 단계 색보다 우선합니다. 놓치면 안 되는 신호입니다. */
+.g-row[style*="--phase"] .g-bar.blocked{
+  background:var(--rose-bg); border-color:var(--rose);
+}
+.g-row[style*="--phase"] .g-bar.blocked > i{ background:var(--rose); }
 .g-track{ flex:1; position:relative; height:100%; }
 .g-grid{ position:absolute; inset:0; display:flex; pointer-events:none; }
 .g-grid > i{ border-left:1px solid var(--line-soft); }

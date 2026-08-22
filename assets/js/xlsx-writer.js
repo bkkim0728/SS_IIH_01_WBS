@@ -122,7 +122,8 @@ export const S = {
   EDIT_L: 2, EDIT_C: 3,
   LOCK_L: 4, LOCK_C: 5,
   EDIT_LB: 6, LOCK_LB: 7, LOCK_CB: 8,
-  TITLE: 9, SECTION: 10, PLAIN: 11, LABEL: 12
+  TITLE: 9, SECTION: 10, PLAIN: 11, LABEL: 12,
+  DATE_EDIT: 13, DATE_PLAIN: 14
 };
 
 const INK   = 'FF1B2233';
@@ -134,6 +135,7 @@ const RULE  = 'FFC9CFDB';
 
 const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy\-mm\-dd"/></numFmts>
 <fonts count="6">
   <font><sz val="9.5"/><color rgb="${INK}"/><name val="맑은 고딕"/></font>
   <font><b/><sz val="10"/><color rgb="FFFFFFFF"/><name val="맑은 고딕"/></font>
@@ -160,7 +162,7 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   </border>
 </borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="13">
+<cellXfs count="15">
   <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
   <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
   <xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1" applyProtection="1"><alignment horizontal="left" vertical="center"/><protection locked="0"/></xf>
@@ -174,12 +176,14 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <xf numFmtId="0" fontId="5" fillId="0" borderId="0" xfId="0" applyFont="1"/>
   <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
   <xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+  <xf numFmtId="164" fontId="0" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1" applyProtection="1"><alignment horizontal="center" vertical="center"/><protection locked="0"/></xf>
+  <xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
 
 /* ---------- 시트 ----------
-   rows: [[{ v, s, t }, ...], ...]   v=값, s=서식인덱스, t='n' 이면 숫자
+   rows: [[{ v, s, t, f }, ...], ...]  v=값, s=서식인덱스, t='n' 숫자, f=수식
    opts: { cols:[{w}], freeze:'D2', autoFilter:'A1:K152', validations:[...] } */
 function sheetXml(rows, opts = {}){
   const maxCol = rows.reduce((m, r) => Math.max(m, r.length), 1);
@@ -206,6 +210,9 @@ function sheetXml(rows, opts = {}){
       if (c == null) return '';
       const ref = `${colLetter(ci+1)}${r}`;
       const st = c.s ? ` s="${c.s}"` : '';
+      // f 가 있으면 수식 셀. v 는 캐시된 계산값으로 함께 넣는다.
+      if (c.f) return `<c r="${ref}"${st}><f>${xmlEsc(c.f)}</f>`
+        + (c.v === '' || c.v == null ? '' : `<v>${c.v}</v>`) + `</c>`;
       if (c.v === '' || c.v == null) return `<c r="${ref}"${st}/>`;
       if (c.t === 'n') return `<c r="${ref}"${st}><v>${c.v}</v></c>`;
       return `<c r="${ref}"${st} t="inlineStr"><is><t xml:space="preserve">${xmlEsc(c.v)}</t></is></c>`;

@@ -323,9 +323,8 @@ select.input{ appearance:none; padding-right:28px;
 .tree-head .r-date{ font-family:var(--sans); letter-spacing:.06em; }
 
 .r-prog{ display:flex; align-items:center; gap:9px; }
-.r-prog .bar{ flex:1; }
+.r-prog .bar{ flex:1; height:7px; }
 .r-prog .pct{ font-family:var(--mono); font-size:11px; width:32px; text-align:right; color:var(--text-2); }
-.r-prog input[type=range]{ width:100%; accent-color:var(--signal); height:4px; cursor:pointer; }
 
 .r-days{ font-size:11px; color:var(--muted); text-align:right; }
 .r-status select{ width:100%; padding:4px 6px; font-size:11px; border-radius:6px;
@@ -358,6 +357,10 @@ select.input{ appearance:none; padding-right:28px;
 .g-row:hover .g-label{ background:#131A28; }
 .g-label code{ font-family:var(--mono); font-size:10px; color:var(--signal-2); flex:none; }
 .g-label span{ font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.g-label .flag{ font-style:normal; font-size:9px; font-family:var(--mono); flex:none;
+  padding:1px 4px; border-radius:3px; letter-spacing:0; }
+.g-label .flag.rose{ background:var(--rose-bg); color:var(--rose); }
+.g-label .flag.amber{ background:var(--amber-bg); color:var(--amber); }
 .g-row.lv1 .g-label span{ font-weight:700; font-size:13px; }
 .g-row.lv1{ background:rgba(59,111,255,.055); }
 .g-track{ flex:1; position:relative; height:100%; }

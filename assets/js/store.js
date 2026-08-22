@@ -4,6 +4,7 @@
    저장소를 쓴다. 화면 코드는 어느 쪽인지 몰라도 된다.
    ================================================================== */
 import { PROJECT, MILESTONES, AGENDA, TASKS, PHASE_WEIGHT } from './seed.js';
+import { bizDays } from './excel.js';
 
 const CFG_KEY  = 'wbshub.config';
 const DATA_KEY = 'wbshub.tasks.' + PROJECT.code;
@@ -158,7 +159,7 @@ function localTasks(){
     const saved = JSON.parse(localStorage.getItem(DATA_KEY) || 'null');
     if (Array.isArray(saved) && saved.length) return saved;
   } catch (_) {}
-  return TASKS.map(t => ({ ...t }));
+  return TASKS.map(t => ({ ...t, days: bizDays(t.start, t.end) }));
 }
 function saveLocal(tasks){
   localStorage.setItem(DATA_KEY, JSON.stringify(tasks));
@@ -200,10 +201,12 @@ export async function load(){
         state.tasks = tasks.map(r => ({
           id: r.id, code: r.code, level: r.level, parent: r.parent_code || '',
           name: r.name, deliverable: r.deliverable || '', owner: r.owner || '',
-          start: r.plan_start, end: r.plan_end, days: r.days || 0,
+          start: r.plan_start, end: r.plan_end,
+          days: bizDays(r.plan_start, r.plan_end),
           progress: r.progress || 0, status: r.status || 'not_started',
           dateSource: r.date_source || 'auto', note: r.note || ''
         }));
+        recalcParents();
         if (ms && ms.length) state.milestones = ms.map(m => ({
           name: m.name, start: m.start_date, end: m.end_date,
           note: m.note || '', adjusted: /보정/.test(m.note || '')
@@ -217,6 +220,7 @@ export async function load(){
   }
   state.mode = 'local';
   state.tasks = localTasks();
+  recalcParents();
   return state;
 }
 
@@ -234,6 +238,7 @@ export async function updateTask(code, patch){
   }
   if (patch.status === 'done') t.progress = 100;
   if (patch.status === 'not_started') t.progress = 0;
+  if (patch.start !== undefined || patch.end !== undefined) t.days = bizDays(t.start, t.end);
 
   if (state.mode === 'supabase'){
     try {
@@ -251,6 +256,7 @@ export async function updateTask(code, patch){
       throw e;
     }
   } else {
+    recalcParents();
     saveLocal(state.tasks);
     if (before.progress !== t.progress || before.status !== t.status){
       pushLocalLog({
@@ -296,6 +302,7 @@ export async function applyBulk({ updates = [], adds = [], removes = [], source 
       const t = state.tasks.find(x => x.code === u.code);
       if (!t) continue;
       for (const c of u.changes) t[c.field] = c.raw !== undefined ? c.raw : c.to;
+      t.days = bizDays(t.start, t.end);
       if (t.level === 4){
         if (t.progress >= 100 && t.status !== 'blocked') t.status = 'done';
         if (t.status === 'done') t.progress = 100;
@@ -322,6 +329,8 @@ export async function applyBulk({ updates = [], adds = [], removes = [], source 
       state.tasks = state.tasks.filter(t => !kill.has(t.code));
       result.removed = kill.size;
     }
+
+    recalcParents();
 
     if (state.mode === 'supabase') await pushAll(updates, adds, removes);
     else {
@@ -409,4 +418,26 @@ export function expandRemoval(codes){
     state.tasks.forEach(t => { if (t.code.startsWith(c + '.')) kill.add(t.code); });
   }
   return state.tasks.filter(t => kill.has(t.code));
+}
+
+
+/* ==================================================================
+   상위 단계 일정 재계산
+   L1~L3 의 시작·종료·일수는 저장값이 아니라 자식들의 범위입니다.
+   자식이 바뀌면(엑셀 반영·삭제 등) 여기서 다시 맞춥니다.
+   ================================================================== */
+export function recalcParents(){
+  for (const lv of [3, 2, 1]){
+    for (const t of state.tasks){
+      if (t.level !== lv) continue;
+      const kids = state.tasks.filter(x => x.parent === t.code);
+      if (!kids.length) continue;
+      const ss = kids.map(k => k.start).filter(Boolean).sort();
+      const ee = kids.map(k => k.end).filter(Boolean).sort();
+      if (ss.length) t.start = ss[0];
+      if (ee.length) t.end = ee[ee.length - 1];
+      t.days = bizDays(t.start, t.end);
+      t.dateSource = 'rollup';
+    }
+  }
 }

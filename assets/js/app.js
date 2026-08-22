@@ -271,7 +271,6 @@ function viewTree(){
     <div class="spacer" style="flex:1"></div>
     <button class="btn" id="exportXlsx">${svg(ICON.down,14)} 엑셀 내려받기</button>
     <button class="btn primary" id="importXlsx">${svg(ICON.up,14)} 엑셀 올리기</button>
-    <button class="btn ghost" id="exportCsv">CSV</button>
     <input type="file" id="xlsxFile" accept=".xlsx,.xls" hidden>
   </div>
 
@@ -340,11 +339,8 @@ function treeRows(){
       <div class="r-date ${t.dateSource==='auto'?'auto':''}">${fmt(t.start)}</div>
       <div class="r-date ${t.dateSource==='auto'?'auto':''}">${fmt(t.end)}</div>
       <div class="r-prog">
-        ${t.level === 4
-          ? `<input type="range" min="0" max="100" step="5" value="${pr}" data-prog="${esc(t.code)}">
-             <span class="pct">${pr}%</span>`
-          : `<div class="bar"><i class="${pr>=100?'full':pr===0?'zero':''}" style="width:${pr}%"></i></div>
-             <span class="pct">${pr}%</span>`}
+        <div class="bar"><i class="${pr>=100?'full':pr===0?'zero':''}" style="width:${pr}%"></i></div>
+        <span class="pct">${pr}%</span>
       </div>
       <div class="r-status">
         ${t.level === 4
@@ -352,7 +348,7 @@ function treeRows(){
               `<option value="${k}" ${t.status===k?'selected':''}>${v.label}</option>`).join('')}</select>`
           : `<span class="badge ${st.cls}">${pr>=100?'완료':pr>0?'진행중':'미착수'}</span>`}
       </div>
-      <div class="r-days mono">${t.days || '—'}</div>
+      <div class="r-days mono">${excel.bizDays(t.start, t.end) || '—'}</div>
     </div>`;
   }).join('');
 }
@@ -390,6 +386,7 @@ function viewGantt(){
     <b>날짜 출처</b>: 원본 시트에 계획일이 들어 있는 Task 는 4건입니다.
     나머지는 마일스톤 구간 안에서 순서대로 자동 배치했고, 트리 화면에서 흐린 날짜로 표시됩니다.
     실제 일정이 정해지면 그 위에 덮어쓰면 됩니다.
+    상위 단계 막대는 하위 Task 의 시작·종료를 그대로 따라가며, 하위에 지연이 있으면 함께 표시됩니다.
   </div>
 
   <div class="gantt-wrap"><div class="gantt-scroll"><div class="gantt">
@@ -408,14 +405,24 @@ function viewGantt(){
         if (!s || !e) return '';
         const l = pct(s), r = pct(new Date(e.getTime() + DAY));
         const pr = progressOf(t);
-        const cls = pr >= 100 ? 'done' : t.status === 'blocked' ? 'blocked' : '';
+        const kids = leavesOf(t.code);
+        const blocked = t.level === 4
+          ? t.status === 'blocked'
+          : kids.some(k => k.status === 'blocked');
+        const late = kids.some(k => k.status !== 'done' && D(k.end) && D(k.end) < today);
+        const cls = blocked ? 'blocked' : pr >= 100 ? 'done' : '';
+        const tip = `${t.name} · ${fmt(t.start)} → ${fmt(t.end)} · ${pr}%`
+          + (blocked ? ' · 지연 포함' : late ? ' · 종료일 초과 포함' : '');
         return `<div class="g-row lv${t.level}">
-          <div class="g-label indent-${t.level}"><code>${esc(t.code)}</code><span>${esc(t.name)}</span></div>
+          <div class="g-label indent-${t.level}">
+            <code>${esc(t.code)}</code><span>${esc(t.name)}</span>
+            ${blocked ? '<em class="flag rose">지연</em>' : late ? '<em class="flag amber">초과</em>' : ''}
+          </div>
           <div class="g-track">
             <div class="g-grid">${weekList.map(w =>
               `<i class="${w.mid.getDate() <= 7 ? 'month' : ''}" style="width:${cw}%"></i>`).join('')}</div>
             <div class="g-bar ${cls}" style="left:${l}%;width:${Math.max(r-l,.7)}%"
-                 title="${esc(t.name)} · ${fmt(t.start)} → ${fmt(t.end)} · ${pr}%">
+                 title="${esc(tip)}">
               <i style="width:${pr}%"></i>
               ${(r - l) > 6 ? `<em>${pr}%</em>` : ''}
             </div>
@@ -520,7 +527,6 @@ function viewSettings(){
         <div class="hint" style="margin-bottom:12px">현재 진척이 반영된 상태로 저장됩니다.</div>
         <div style="display:flex;gap:9px;flex-wrap:wrap">
           <button class="btn" id="expXlsx">${svg(ICON.sheet,14)} 엑셀</button>
-          <button class="btn" id="expCsv">${svg(ICON.down,14)} CSV</button>
           <button class="btn" id="expJson">${svg(ICON.down,14)} JSON</button>
         </div>
         <div class="hint" style="margin-top:10px">
@@ -546,15 +552,6 @@ function download(name, text, type){
   const url = URL.createObjectURL(new Blob(['\ufeff' + text], { type }));
   const a = Object.assign(document.createElement('a'), { href:url, download:name });
   a.click(); URL.revokeObjectURL(url);
-}
-function exportCsv(){
-  const head = ['WBS','Level','작업명','산출물','담당자','계획시작','계획종료','일수','진척률','상태','날짜출처'];
-  const q = v => `"${String(v ?? '').replace(/"/g,'""')}"`;
-  const body = state.tasks.map(t => [t.code, t.level, t.name, t.deliverable, t.owner,
-    t.start, t.end, t.days, progressOf(t), (STATUS[t.status]||{}).label || '', t.dateSource].map(q).join(','));
-  download(`WBS_${state.project.code}_${new Date().toISOString().slice(0,10)}.csv`,
-    [head.map(q).join(','), ...body].join('\n'), 'text/csv;charset=utf-8');
-  toast('CSV 를 내려받았습니다.');
 }
 function exportJson(){
   download(`WBS_${state.project.code}_${new Date().toISOString().slice(0,10)}.json`,
@@ -954,7 +951,6 @@ function bind(){
       $('#rows').innerHTML = treeRows();
       renderSelBar();
     }
-    if (id === 'exportCsv' || id === 'expCsv') exportCsv();
     if (id === 'exportXlsx' || id === 'expXlsx') await exportXlsx();
     if (id === 'importXlsx' || id === 'impXlsx') $('#xlsxFile')?.click();
     if (id === 'writeTest') await runWriteTest();
@@ -985,10 +981,6 @@ function bind(){
   document.addEventListener('input', async e => {
     const t = e.target;
     if (t.id === 'q'){ filter.q = t.value; $('#rows').innerHTML = treeRows(); renderSelBar(); return; }
-    if (t.dataset.prog){
-      const row = t.closest('.row');
-      row.querySelector('.pct').textContent = t.value + '%';
-    }
   });
 
   document.addEventListener('change', async e => {
@@ -1010,9 +1002,9 @@ function bind(){
     if (t.id === 'fLevel'){ filter.level = t.value; $('#rows').innerHTML = treeRows(); renderSelBar(); return; }
     if (t.id === 'gDepth'){ ganttDepth = +t.value; await renderView(); return; }
 
-    if (t.dataset.prog || t.dataset.status){
-      const code = t.dataset.prog || t.dataset.status;
-      const patch = t.dataset.prog ? { progress:+t.value } : { status:t.value };
+    if (t.dataset.status){
+      const code = t.dataset.status;
+      const patch = { status: t.value };
       try {
         await store.updateTask(code, patch);
         $('#rows').innerHTML = treeRows();

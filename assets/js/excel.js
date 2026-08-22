@@ -6,6 +6,10 @@
 import { writeXlsx, S } from './xlsx-writer.js';
 import { HOLIDAYS, HOLIDAY_SET } from './holidays.js';
 
+/* 엑셀 날짜 체계. 기본은 1900(=1899-12-30 기준), Mac 계열은 1904 기준입니다.
+   1904 파일을 1900 으로 읽으면 모든 날짜가 4년 1일씩 어긋납니다. */
+let DATE_EPOCH = Date.UTC(1899, 11, 30);
+
 export const SHEET = 'WBS';
 export const HELP_SHEET = '작성안내';
 export const HOL_SHEET  = '공휴일';
@@ -72,7 +76,7 @@ function toDate(v){
   }
   // 엑셀 일련번호. UTC 로만 계산해 어느 시간대에서든 같은 날짜가 나옵니다.
   if (typeof v === 'number' && isFinite(v) && v > 1 && v < 400000){
-    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 864e5);
+    const d = new Date(DATE_EPOCH + Math.round(v) * 864e5);
     return d.toISOString().slice(0, 10);
   }
   const pad = (a, b, c) => `${a}-${String(b).padStart(2,'0')}-${String(c).padStart(2,'0')}`;
@@ -271,6 +275,11 @@ export async function readWorkbook(file){
   // 그 33분 때문에 자정 직전으로 떨어져 날짜가 하루 밀립니다.
   // 그래서 변환을 맡기지 않고 숫자 그대로 받아 아래 toDate() 에서 UTC 로 계산합니다.
   const wb = XLSX.read(buf, { type:'array', cellDates:false });
+
+  // Mac Excel 로 저장한 파일은 1904 체계를 씁니다. 기준일을 맞춰 둡니다.
+  const is1904 = !!(wb.Workbook && wb.Workbook.WBProps && wb.Workbook.WBProps.date1904);
+  DATE_EPOCH = is1904 ? Date.UTC(1904, 0, 1) : Date.UTC(1899, 11, 30);
+
   const name = wb.SheetNames.includes(SHEET) ? SHEET : wb.SheetNames[0];
   if (!name) throw new Error('시트를 찾을 수 없습니다.');
   const ws = wb.Sheets[name];
@@ -278,7 +287,7 @@ export async function readWorkbook(file){
   if (!rows.length) throw new Error(`'${name}' 시트에 데이터가 없습니다.`);
   if (!(COLUMNS[0].head in rows[0]))
     throw new Error(`머리글에 '${COLUMNS[0].head}' 열이 없습니다. 앱에서 내려받은 양식을 쓰세요.`);
-  return { rows, sheetName: name };
+  return { rows, sheetName: name, is1904 };
 }
 
 export function diff(rows, tasks){
@@ -363,4 +372,35 @@ export function diff(rows, tasks){
 
   const removes = tasks.filter(t => !seen.has(t.code));
   return { updates, adds, removes, problems, ignored, matched: seen.size };
+}
+
+
+/* ==================================================================
+   반영 결과 대조
+   엑셀에 적힌 날짜와 화면에 들어간 날짜를 한 건씩 맞춰 봅니다.
+   중간 어디서든 값이 틀어지면 여기서 잡힙니다.
+   ================================================================== */
+export function auditDates(rows, tasks){
+  const byCode = new Map(tasks.map(t => [t.code, t]));
+  const out = { checked: 0, matched: 0, skipped: 0, mismatched: [] };
+
+  for (const r of rows){
+    const code = txt(r[COLUMNS[0].head]);
+    if (!code) continue;
+    const cur = byCode.get(code);
+    if (!cur) continue;
+
+    for (const [key, head] of [['start', '계획시작'], ['end', '계획종료']]){
+      const want = toDate(r[head]);
+      if (want === null || want === '') continue;      // 못 읽었거나 비어 있음
+
+      // 상위 단계 날짜는 자식에서 자동 계산되므로 대조 대상이 아닙니다.
+      if (cur.level !== 4){ out.skipped++; continue; }
+
+      out.checked++;
+      if (cur[key] === want) out.matched++;
+      else out.mismatched.push({ code, head, 엑셀: want, 화면: cur[key] || '(없음)' });
+    }
+  }
+  return out;
 }

@@ -787,6 +787,33 @@ function exportJson(){
 
 
 
+function showDateAudit(a){
+  openModal({
+    title: '날짜 대조 결과',
+    sub: `${a.checked}건 중 ${a.matched}건 일치 · ${a.mismatched.length}건 불일치`,
+    applyLabel: '닫기',
+    onApply: null,
+    body: `
+      <div class="note" style="border-left-color:var(--rose);background:var(--rose-bg);color:#F5C4CE;margin-bottom:14px">
+        <b>엑셀에 적힌 날짜와 화면 값이 다릅니다.</b>
+        아래 내용을 그대로 알려 주시면 원인을 찾겠습니다.
+      </div>
+      <div class="chg-list">
+        ${a.mismatched.slice(0,60).map(m => `
+          <div class="chg">
+            <code>${esc(m.code)}</code>
+            <div style="font-size:12.5px">
+              <span class="mono">${esc(m.head)}</span>
+              엑셀 <b class="mono" style="color:var(--mint)">${esc(m.엑셀)}</b>
+              <span style="color:var(--muted)"> / </span>
+              화면 <b class="mono" style="color:var(--rose)">${esc(m.화면)}</b>
+            </div>
+          </div>`).join('')}
+        ${a.mismatched.length > 60 ? `<div class="chg" style="color:var(--muted)">외 ${a.mismatched.length - 60}건</div>` : ''}
+      </div>`
+  });
+}
+
 /* ==================================================================
    마일스톤 관리
    ================================================================== */
@@ -1185,9 +1212,12 @@ let pending = null;   // 미리보기에서 확인 대기 중인 변경분
 async function handleFile(file){
   if (typeof XLSX === 'undefined') return toast('엑셀 모듈을 불러오지 못했습니다.', true);
   try {
-    const { rows, sheetName } = await excel.readWorkbook(file);
+    const { rows, sheetName, is1904 } = await excel.readWorkbook(file);
     const d = excel.diff(rows, state.tasks);
-    pending = { ...d, fileName: file.name, sheetName, rowCount: rows.length };
+    const dateCount = d.updates.reduce(
+      (n, u) => n + u.changes.filter(c => c.field === 'start' || c.field === 'end').length, 0);
+    pending = { ...d, rows, dateCount, fileName: file.name, sheetName,
+                rowCount: rows.length, is1904 };
     openPreview();
   } catch (e){
     toast('읽기 실패: ' + e.message, true);
@@ -1223,6 +1253,12 @@ function openPreview(){
             `<li><span class="mono">${p.row}행 ${esc(p.code)}</span> ${esc(p.msg)}</li>`).join('')}
           ${d.problems.length > 8 ? `<li>외 ${d.problems.length - 8}건</li>` : ''}
         </ul>
+      </div>` : ''}
+
+    ${d.dateCount ? `
+      <div class="note" style="margin-bottom:14px;border-left-color:var(--mint);background:var(--mint-bg);color:#B8EEDA">
+        <b>날짜 ${d.dateCount}건</b>을 파일에 적힌 그대로 넣습니다.
+        반영 뒤 파일과 한 건씩 대조해 결과를 알려 드립니다.
       </div>` : ''}
 
     ${d.ignored?.length ? `
@@ -1284,7 +1320,8 @@ function openPreview(){
 
   openModal({
     title: '엑셀 반영 미리보기',
-    sub: `${d.fileName} · ${d.sheetName} 시트 · ${d.rowCount}행`,
+    sub: `${d.fileName} · ${d.sheetName} 시트 · ${d.rowCount}행`
+       + (d.is1904 ? ' · 1904 날짜 체계 (Mac Excel)' : ''),
     body,
     applyLabel: total ? `${total}건 반영` : '삭제만 반영',
     onApply: (total || d.removes.length) ? applyPending : null
@@ -1320,10 +1357,21 @@ async function applyPending(){
   const btn = $('#modalApply');
   btn.disabled = true; btn.textContent = '반영 중…';
   try {
+    const rowsSnapshot = pending.rows;
     const r = await store.applyBulk(payload);
+
+    // 파일에 적힌 날짜가 그대로 들어갔는지 한 건씩 대조합니다.
+    const audit = excel.auditDates(rowsSnapshot, state.tasks);
     closePreview();
     await refresh();
-    toast(`반영 완료 — 수정 ${r.updated} · 추가 ${r.added} · 삭제 ${r.removed}`);
+
+    if (audit.mismatched.length){
+      showDateAudit(audit);
+      toast(`날짜 ${audit.mismatched.length}건이 파일과 다릅니다. 확인해 주세요.`, true);
+    } else {
+      toast(`반영 완료 — 수정 ${r.updated} · 추가 ${r.added} · 삭제 ${r.removed}`
+        + (audit.checked ? ` · 날짜 ${audit.matched}/${audit.checked} 일치` : ''));
+    }
   } catch (e){
     btn.disabled = false; btn.textContent = '다시 시도';
     toast('반영 실패: ' + e.message, true);

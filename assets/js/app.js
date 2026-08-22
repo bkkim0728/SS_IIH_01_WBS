@@ -380,10 +380,13 @@ function treeRows(){
         if (editCell && editCell.code === t.code && editCell.field === f)
           return `<div class="r-date"><input type="date" class="input cell-edit date"
                     data-edit-date="${esc(t.code)}|${f}" value="${esc(t[f] || '')}"></div>`;
-        if (t.level !== 4)
-          return `<div class="r-date locked" title="${label} ${fmt(t[f])} · 하위 Task 범위에서 자동 계산">${fmt(t[f])}</div>`;
-        return `<div class="r-date"><span class="cell" data-edit="${esc(t.code)}|${f}"
-                  title="${label} ${fmt(t[f])} · ${DATE_SRC[t.dateSource] || ''} · 눌러서 수정">${fmt(t[f])}</span></div>`;
+        const tip = t.level === 4
+          ? `${label} ${fmt(t[f])} · ${DATE_SRC[t.dateSource] || ''} · 눌러서 수정`
+          : (f === 'start'
+              ? `${label} ${fmt(t[f])} · 고치면 이 그룹 전체가 그만큼 이동합니다`
+              : `${label} ${fmt(t[f])} · 고치면 그룹의 끝을 정하는 Task 가 그 날짜로 맞춰집니다`);
+        return `<div class="r-date"><span class="cell ${t.level !== 4 ? 'group' : ''}"
+                  data-edit="${esc(t.code)}|${f}" title="${esc(tip)}">${fmt(t[f])}</span></div>`;
       }).join('')}
       <div class="r-prog">
         <div class="bar"><i class="${pr>=100?'full':pr===0?'zero':''}" style="width:${pr}%"></i></div>
@@ -1141,11 +1144,23 @@ async function saveCell(code, field, value){
   const v = field === 'name' ? String(value).trim() : String(value || '');
   if (v === (t[field] || '')){ closeCell(); return; }   // 안 바뀌었으면 조용히 닫는다
 
+  const label = { name:'작업명', start:'계획시작', end:'계획종료' }[field];
   try {
+    if (field !== 'name' && t.level !== 4){
+      // 상위 단계는 자식들을 실제로 움직입니다.
+      const r = await store.updateGroupDate(code, field, v);
+      editCell = null;
+      await refresh();
+      const dir = r.delta > 0 ? `${r.delta}일 뒤로` : `${-r.delta}일 앞으로`;
+      toast(field === 'start'
+        ? `${code} 그룹 ${r.moved}건을 ${dir} 옮겼습니다.`
+        : `${code} 그룹의 끝을 ${fmt(v)} 로 맞췄습니다. (Task ${r.moved}건)`);
+      return;
+    }
+
     const saved = await store.updateTask(code, { [field]: v });
     editCell = null;
     await refresh();
-    const label = { name:'작업명', start:'계획시작', end:'계획종료' }[field];
     toast(saved && saved.shifted
       ? `${code} 일정을 ${fmt(saved.start)} ~ ${fmt(saved.end)} 로 미뤘습니다. (기간 유지)`
       : `${code} ${label} 저장했습니다.`);
@@ -1263,12 +1278,12 @@ let pending = null;   // 미리보기에서 확인 대기 중인 변경분
 async function handleFile(file){
   if (typeof XLSX === 'undefined') return toast('엑셀 모듈을 불러오지 못했습니다.', true);
   try {
-    const { rows, sheetName, is1904 } = await excel.readWorkbook(file);
-    const d = excel.diff(rows, state.tasks);
+    const { rows, sheetName, is1904, hasUid } = await excel.readWorkbook(file);
+    const d = excel.diff(rows, state.tasks, hasUid);
     const dateCount = d.updates.reduce(
       (n, u) => n + u.changes.filter(c => c.field === 'start' || c.field === 'end').length, 0);
     pending = { ...d, rows, dateCount, fileName: file.name, sheetName,
-                rowCount: rows.length, is1904 };
+                rowCount: rows.length, is1904, hasUid };
     openPreview();
   } catch (e){
     toast('읽기 실패: ' + e.message, true);
@@ -1306,6 +1321,15 @@ function openPreview(){
         </ul>
       </div>` : ''}
 
+    ${!d.hasUid ? `
+      <div class="note" style="margin-bottom:14px">
+        <b>ID 열이 없는 옛 양식입니다.</b>
+        WBS 코드로 짝을 찾습니다. 그 사이 번호 정리가 있었다면
+        <b>엉뚱한 Task 에 값이 들어갈 수 있습니다.</b>
+        ${d.renamedByCode ? `실제로 <b>작업명이 다른 행이 ${d.renamedByCode}건</b> 있습니다. 취소하고 엑셀을 새로 내려받으세요.`
+                          : '작업명은 모두 일치하니 그대로 진행하셔도 됩니다.'}
+      </div>` : ''}
+
     ${d.dateCount ? `
       <div class="note" style="margin-bottom:14px;border-left-color:var(--mint);background:var(--mint-bg);color:#B8EEDA">
         <b>날짜 ${d.dateCount}건</b>을 파일에 적힌 그대로 넣습니다.
@@ -1339,13 +1363,21 @@ function openPreview(){
         ${d.updates.length > 60 ? `<div class="chg" style="color:var(--muted)">외 ${d.updates.length - 60}건</div>` : ''}
       </div>` : ''}
 
+    ${d.adds.some(a => a.restored) ? `
+      <div class="note" style="margin-bottom:14px">
+        <b>지웠던 Task 가 파일에 남아 있습니다.</b>
+        이 파일은 삭제하기 전에 내려받으신 것 같습니다. 그대로 반영하면 다시 살아납니다.
+        원치 않으시면 취소하고 엑셀을 새로 내려받으세요.
+      </div>` : ''}
+
     ${d.adds.length ? `
       <h4 style="margin:16px 0 8px;font-size:13px">추가 ${d.adds.length}건</h4>
       <div class="chg-list">
         ${d.adds.slice(0,30).map(a => `
           <div class="chg"><code>${esc(a.code)}</code>
             <div style="font-size:12.5px">${esc(a.name)}
-              <span class="badge" style="margin-left:6px">L${a.level}</span></div>
+              <span class="badge" style="margin-left:6px">L${a.level}</span>
+              ${a.restored ? '<span class="badge b-amber" style="margin-left:4px">되살림</span>' : ''}</div>
           </div>`).join('')}
       </div>` : ''}
 

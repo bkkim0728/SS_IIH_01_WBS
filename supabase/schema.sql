@@ -31,7 +31,8 @@ create table projects (
 create table tasks (
   id          uuid primary key default gen_random_uuid(),
   project_id  uuid not null references projects(id) on delete cascade,
-  code        text not null,                    -- 2.1.1.3
+  uid         text,                             -- 번호와 무관한 고정 ID (T0001 …)
+  code        text not null,                    -- 2.1.1.3 (번호 정리로 바뀔 수 있음)
   level       smallint not null check (level between 1 and 4),
   parent_code text,                             -- 2.1.1
   name        text not null,
@@ -53,6 +54,7 @@ create table tasks (
 create index tasks_project_idx on tasks (project_id);
 create index tasks_parent_idx  on tasks (project_id, parent_code);
 create index tasks_level_idx   on tasks (project_id, level);
+create unique index tasks_uid_key on tasks (project_id, uid);
 
 -- ---------------------------------------------------------------------
 -- 3. 마일스톤

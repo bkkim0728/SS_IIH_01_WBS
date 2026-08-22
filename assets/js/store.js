@@ -156,12 +156,27 @@ export async function testConnection(url, key){
 }
 
 /* --- 로컬 저장소 --------------------------------------------------- */
+/* WBS 코드는 번호 정리로 바뀝니다. 그래서 코드와 무관한 고정 ID 를 따로 둡니다.
+   엑셀에도 이 ID 를 실어 보내고, 올릴 때 코드가 아니라 ID 로 짝을 찾습니다.
+   그래야 번호를 정리한 뒤에도 예전 파일이 엉뚱한 Task 에 붙지 않습니다. */
+export const newUid = () =>
+  'T' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+function ensureUids(list){
+  const seen = new Set();
+  list.forEach((t, i) => {
+    if (!t.uid || seen.has(t.uid)) t.uid = 'T' + String(i + 1).padStart(4, '0');
+    seen.add(t.uid);
+  });
+  return list;
+}
+
 function localTasks(){
   try {
     const saved = JSON.parse(localStorage.getItem(DATA_KEY) || 'null');
-    if (Array.isArray(saved) && saved.length) return saved;
+    if (Array.isArray(saved) && saved.length) return ensureUids(saved);
   } catch (_) {}
-  return TASKS.map(t => ({ ...t, days: bizDays(t.start, t.end) }));
+  return ensureUids(TASKS.map(t => ({ ...t, days: bizDays(t.start, t.end) })));
 }
 function saveLocal(tasks){
   localStorage.setItem(DATA_KEY, JSON.stringify(tasks));
@@ -208,8 +223,10 @@ export async function load(){
           start: r.plan_start, end: r.plan_end,
           days: bizDays(r.plan_start, r.plan_end),
           progress: r.progress || 0, status: r.status || 'not_started',
-          dateSource: r.date_source || 'auto', note: r.note || ''
+          dateSource: r.date_source || 'auto', note: r.note || '',
+          uid: r.uid || ''
         }));
+        ensureUids(state.tasks);
         recalcParents();
         await loadAgenda();
         if (ms && ms.length){
@@ -336,7 +353,9 @@ export async function applyBulk({ updates = [], adds = [], removes = [], source 
   try {
     // 1) 수정
     for (const u of updates){
-      const t = state.tasks.find(x => x.code === u.code);
+      // 코드는 번호 정리로 바뀔 수 있으니 고정 ID 를 먼저 봅니다.
+      const t = (u.uid && state.tasks.find(x => x.uid === u.uid))
+             || state.tasks.find(x => x.code === u.code);
       if (!t) continue;
       for (const c of u.changes) t[c.field] = c.raw !== undefined ? c.raw : c.to;
       t.days = bizDays(t.start, t.end);
@@ -351,7 +370,7 @@ export async function applyBulk({ updates = [], adds = [], removes = [], source 
     // 2) 추가 — WBS 코드 순으로 제자리에 꽂는다
     for (const a of adds){
       if (state.tasks.some(x => x.code === a.code)) continue;
-      state.tasks.push({ ...a });
+      state.tasks.push({ ...a, uid: a.uid || newUid() });
       result.added++;
     }
     if (result.added) state.tasks.sort((x, y) => cmpCode(x.code, y.code));
@@ -411,9 +430,11 @@ async function pushAll(updates, adds, removes){
       const col = { start:'plan_start', end:'plan_end' }[c.field] || c.field;
       body[col] = (col === 'plan_start' || col === 'plan_end') ? (v || null) : v;
     }
-    const t = state.tasks.find(x => x.code === u.code);
-    if (t && t.level === 4){ body.progress = t.progress; body.status = t.status; }
-    await sb(`tasks?code=eq.${encodeURIComponent(u.code)}`, {
+    const t = (u.uid && state.tasks.find(x => x.uid === u.uid))
+           || state.tasks.find(x => x.code === u.code);
+    if (!t) continue;
+    if (t.level === 4){ body.progress = t.progress; body.status = t.status; }
+    await sb(`tasks?code=eq.${encodeURIComponent(t.code)}`, {
       method:'PATCH', body: JSON.stringify(body)
     });
   }
@@ -427,7 +448,7 @@ async function pushAll(updates, adds, removes){
         deliverable: a.deliverable, owner: a.owner,
         plan_start: a.start || null, plan_end: a.end || null,
         days: a.days, progress: a.progress, status: a.status,
-        date_source: 'file', note: ''
+        date_source: 'file', note: '', uid: a.uid || newUid()
       })))
     });
   }
@@ -825,4 +846,91 @@ export async function deleteMilestone(id){
 export function resetMilestones(){
   localStorage.removeItem(MS_KEY);
   state.milestones = seedMilestones();
+}
+
+
+/* ==================================================================
+   상위 단계(L1~L3)의 날짜 고치기
+
+   상위 날짜는 자식에서 계산되는 값이라 그 자리에 값을 넣어봐야 바로 덮어써집니다.
+   그래서 자식들을 실제로 움직입니다.
+
+     계획시작을 바꾸면  → 그룹 전체를 그 차이만큼 이동 (내부 간격 유지)
+     계획종료를 바꾸면  → 그룹의 끝을 정하는 Task 의 종료일만 그 날짜로 (늘리기·줄이기)
+   ================================================================== */
+const isoOf = d => {
+  const p2 = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`;
+};
+const addDays = (iso, n) => {
+  const d = new Date(iso + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return isoOf(d);
+};
+const diffDays = (a, b) =>
+  Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 864e5);
+
+/* 그 아래에서 실제로 일정을 가진 말단 Task 들 */
+export function leavesUnder(code){
+  const kids = c => state.tasks.filter(t => t.parent === c);
+  const out = [];
+  const walk = c => {
+    const k = kids(c);
+    if (!k.length){ const t = state.tasks.find(x => x.code === c); if (t) out.push(t); return; }
+    k.forEach(x => walk(x.code));
+  };
+  walk(code);
+  return out.filter(t => t.start && t.end);
+}
+
+export async function updateGroupDate(code, field, value){
+  const t = state.tasks.find(x => x.code === code);
+  if (!t) throw new Error('Task 를 찾을 수 없습니다.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error('날짜 형식이 올바르지 않습니다.');
+
+  const leaves = leavesUnder(code);
+  if (!leaves.length) throw new Error('아래에 일정을 가진 Task 가 없습니다.');
+
+  const snapshot = state.tasks.map(x => ({ ...x }));
+  let moved = [];
+
+  try {
+    if (field === 'start'){
+      const delta = diffDays(t.start, value);
+      if (delta === 0) return { moved: 0, shifted: 0 };
+      leaves.forEach(l => {
+        l.start = addDays(l.start, delta);
+        l.end   = addDays(l.end, delta);
+        l.days  = bizDays(l.start, l.end);
+        moved.push(l);
+      });
+      var summary = { moved: moved.length, delta };
+    } else {
+      // 그룹의 끝을 정하는 Task 들만 새 종료일로 맞춥니다.
+      const last = leaves.filter(l => l.end === t.end);
+      for (const l of last){
+        if (value < l.start)
+          throw new Error(`${l.code} 의 계획시작(${l.start})보다 빠른 날짜입니다.`);
+      }
+      last.forEach(l => { l.end = value; l.days = bizDays(l.start, l.end); moved.push(l); });
+      var summary = { moved: moved.length, delta: diffDays(t.end, value) };
+    }
+
+    recalcParents();
+
+    if (state.mode === 'supabase'){
+      for (const l of moved){
+        await sb(`tasks?code=eq.${encodeURIComponent(l.code)}`, {
+          method:'PATCH',
+          body: JSON.stringify({ plan_start: l.start || null, plan_end: l.end || null })
+        });
+      }
+    } else {
+      saveLocal(state.tasks);
+    }
+    return summary;
+  } catch (e){
+    state.tasks = snapshot;
+    throw e;
+  }
 }

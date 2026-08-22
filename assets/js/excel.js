@@ -17,6 +17,7 @@ export const HOL_SHEET  = '공휴일';
 /* 열 정의. key 는 내부 필드, head 는 엑셀 머리글.
    edit=false 인 열은 읽기 전용이며, 바꿔도 무시합니다. */
 export const COLUMNS = [
+  { key:'uid',         head:'ID',       width:11, edit:false },
   { key:'code',        head:'WBS',      width:14, edit:false },
   { key:'level',       head:'레벨',      width:6,  edit:false },
   { key:'parent',      head:'상위',      width:12, edit:false },
@@ -157,7 +158,7 @@ export async function buildWorkbook(tasks, project, progressOf){
     const r = i + 2;
     cells[iDays] = {
       ...cells[iDays],
-      f: `IFERROR(NETWORKDAYS(F${r},G${r},${hRef}),"")`,
+      f: `IFERROR(NETWORKDAYS(G${r},H${r},${hRef}),"")`,
       v: bizDays(tasks[i].start, tasks[i].end)
     };
   });
@@ -168,14 +169,14 @@ export async function buildWorkbook(tasks, project, progressOf){
     rows: [head, ...rows],
     opts: {
       cols: COLUMNS.map(c => ({ w: c.width })),
-      freeze: 'D2',
+      freeze: 'E2',
       headHeight: 26,
-      autoFilter: `A1:J${last}`,
+      autoFilter: `A1:K${last}`,
       validations: [
-        { type:'list', sqref:`J2:J${last}`, f1:'"미착수,진행중,완료,지연"',
+        { type:'list', sqref:`K2:K${last}`, f1:'"미착수,진행중,완료,지연"',
           title:'쓸 수 없는 값', msg:'미착수 / 진행중 / 완료 / 지연 중에서 고르세요.',
           prompt:'목록에서 고르세요.' },
-        { type:'whole', operator:'between', sqref:`I2:I${last}`, f1:'0', f2:'100',
+        { type:'whole', operator:'between', sqref:`J2:J${last}`, f1:'0', f2:'100',
           title:'범위를 벗어남', msg:'진척률은 0에서 100 사이 정수입니다.' }
       ]
     }
@@ -285,14 +286,47 @@ export async function readWorkbook(file){
   const ws = wb.Sheets[name];
   const rows = XLSX.utils.sheet_to_json(ws, { defval:'', raw:true, cellDates:false });
   if (!rows.length) throw new Error(`'${name}' 시트에 데이터가 없습니다.`);
-  if (!(COLUMNS[0].head in rows[0]))
-    throw new Error(`머리글에 '${COLUMNS[0].head}' 열이 없습니다. 앱에서 내려받은 양식을 쓰세요.`);
-  return { rows, sheetName: name, is1904 };
+  // ID 열은 예전 파일에 없을 수 있어 필수로 보지 않습니다. WBS 열만 있으면 받습니다.
+  if (!('WBS' in rows[0]))
+    throw new Error(`머리글에 'WBS' 열이 없습니다. 앱에서 내려받은 양식을 쓰세요.`);
+  const hasUid = 'ID' in rows[0];
+  return { rows, sheetName: name, is1904, hasUid };
 }
 
-export function diff(rows, tasks){
+export function diff(rows, tasks, hasUid = false){
   const byCode = new Map(tasks.map(t => [t.code, t]));
-  const seen = new Set();
+  const byUid  = new Map(tasks.filter(t => t.uid).map(t => [t.uid, t]));
+  const seen = new Set();          // 처리한 Task 의 uid (없으면 code)
+  let renamedByCode = 0;           // ID 없이 코드로만 짝지은 뒤 이름이 다른 건수
+
+  /* 파일의 한 줄이 어느 Task 인지 찾습니다.
+
+     ID 열이 있는 파일이면 오직 ID 로만 찾습니다.
+     ID 가 안 맞는데 코드로 되짚으면, 그 사이 번호가 바뀌었을 때
+     전혀 다른 Task 를 덮어씁니다. 그래서 되짚지 않습니다.
+     ID 열이 없는 옛 파일일 때만 코드로 찾습니다. */
+  const locate = r => {
+    const uid = txt(r['ID']);
+    if (hasUid){
+      if (!uid) return { t: null, by: null };
+      const t = byUid.get(uid);
+      return t ? { t, by: 'uid' } : { t: null, by: null };
+    }
+    const t = byCode.get(txt(r['WBS']));
+    return t ? { t, by: 'code' } : { t: null, by: null };
+  };
+
+  /* 코드가 이미 쓰이고 있으면 같은 부모 아래 다음 빈 번호를 내줍니다. */
+  const freeCode = (wanted, parent) => {
+    const used = new Set(tasks.map(t => t.code).concat(adds.map(a => a.code)));
+    if (!used.has(wanted)) return wanted;
+    if (!parent) return wanted;
+    for (let n = 1; n < 1000; n++){
+      const c = `${parent}.${n}`;
+      if (!used.has(c)) return c;
+    }
+    return wanted;
+  };
   const updates = [];      // { code, name, changes:[{field,label,from,to}] }
   const adds = [];
   const problems = [];     // { row, code, msg }
@@ -300,12 +334,18 @@ export function diff(rows, tasks){
 
   rows.forEach((r, i) => {
     const line = i + 2;    // 머리글이 1행
-    const code = txt(r[COLUMNS[0].head]);
+    const code = txt(r['WBS']);
     if (!code) return;     // 빈 행은 조용히 넘긴다
-    if (seen.has(code)){ problems.push({ row:line, code, msg:'WBS 코드가 중복됩니다.' }); return; }
-    seen.add(code);
 
-    const cur = byCode.get(code);
+    const found = locate(r);
+    const cur = found.t;
+    const key = cur ? (cur.uid || cur.code) : code;
+    if (seen.has(key)){ problems.push({ row:line, code, msg:'같은 Task 가 두 번 나옵니다.' }); return; }
+    seen.add(key);
+
+    // ID 없이 코드로만 짝지었는데 이름까지 다르면, 번호가 정리되기 전 파일일 수 있습니다.
+    if (cur && found.by === 'code' && !txt(r['ID'])
+        && txt(r['작업명']) && txt(r['작업명']) !== cur.name) renamedByCode++;
 
     // --- 새 Task ---
     if (!cur){
@@ -314,11 +354,13 @@ export function diff(rows, tasks){
       if (!nm){ problems.push({ row:line, code, msg:'새 Task 인데 작업명이 비어 있습니다.' }); return; }
       if (!(lv >= 1 && lv <= 4)){ problems.push({ row:line, code, msg:'새 Task 는 레벨(1~4)이 필요합니다.' }); return; }
       const parent = txt(r['상위']) || (code.includes('.') ? code.replace(/\.[^.]+$/,'') : '');
-      if (lv > 1 && !byCode.has(parent) && !rows.some(x => txt(x[COLUMNS[0].head]) === parent)){
+      if (lv > 1 && !byCode.has(parent) && !rows.some(x => txt(x['WBS']) === parent)){
         problems.push({ row:line, code, msg:`상위 '${parent}' 를 찾을 수 없습니다.` }); return;
       }
+      const useCode = freeCode(code, parent);
       adds.push({
-        code, level:lv, parent, name:nm,
+        uid: txt(r['ID']) || '', code: useCode, level:lv, parent, name:nm,
+        restored: !!txt(r['ID']),      // ID 는 있는데 앱에 없음 = 지웠던 Task
         deliverable: '', owner: txt(r['담당자']),
         start: toDate(r['계획시작']) || '', end: toDate(r['계획종료']) || '',
         days: 0,   // 아래에서 날짜로부터 계산
@@ -367,11 +409,12 @@ export function diff(rows, tasks){
       else if (st) push('status', '상태', STATUS_LABEL[cur.status], STATUS_LABEL[st], st);
     }
 
-    if (changes.length) updates.push({ code, name: cur.name, changes });
+    if (changes.length)
+      updates.push({ uid: cur.uid || '', code: cur.code, name: cur.name, changes });
   });
 
-  const removes = tasks.filter(t => !seen.has(t.code));
-  return { updates, adds, removes, problems, ignored, matched: seen.size };
+  const removes = tasks.filter(t => !seen.has(t.uid || t.code));
+  return { updates, adds, removes, problems, ignored, renamedByCode, matched: seen.size };
 }
 
 
@@ -382,12 +425,14 @@ export function diff(rows, tasks){
    ================================================================== */
 export function auditDates(rows, tasks){
   const byCode = new Map(tasks.map(t => [t.code, t]));
+  const byUid  = new Map(tasks.filter(t => t.uid).map(t => [t.uid, t]));
   const out = { checked: 0, matched: 0, skipped: 0, mismatched: [] };
 
   for (const r of rows){
-    const code = txt(r[COLUMNS[0].head]);
+    const code = txt(r['WBS']);
     if (!code) continue;
-    const cur = byCode.get(code);
+    const uid = txt(r['ID']);
+    const cur = (uid && byUid.get(uid)) || byCode.get(code);
     if (!cur) continue;
 
     for (const [key, head] of [['start', '계획시작'], ['end', '계획종료']]){
@@ -399,7 +444,7 @@ export function auditDates(rows, tasks){
 
       out.checked++;
       if (cur[key] === want) out.matched++;
-      else out.mismatched.push({ code, head, 엑셀: want, 화면: cur[key] || '(없음)' });
+      else out.mismatched.push({ code: cur.code, head, 엑셀: want, 화면: cur[key] || '(없음)' });
     }
   }
   return out;

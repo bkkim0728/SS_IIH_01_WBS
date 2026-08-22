@@ -823,7 +823,8 @@ select.input{ appearance:none; padding-right:28px;
   background:var(--panel-3); color:var(--text);
   box-shadow:inset 0 0 0 1px var(--line);
 }
-.r-date.locked{ opacity:.72; }
+.r-date .cell.group{ border-bottom:1px dotted rgba(255,255,255,.18); }
+.r-date .cell.group:hover{ box-shadow:inset 0 0 0 1px var(--amber); color:var(--amber); }
 
 .cell-edit{
   padding:3px 7px; font-size:13px; height:26px; width:100%;

@@ -238,8 +238,31 @@ export async function load(){
 export async function updateTask(code, patch){
   const t = state.tasks.find(x => x.code === code);
   if (!t) return null;
-  const before = { progress: t.progress, status: t.status };
+  const before = { ...t };
   Object.assign(t, patch);
+
+  // 값 다듬기
+  if (patch.name !== undefined){
+    t.name = String(patch.name).trim();
+    if (!t.name){ Object.assign(t, before); throw new Error('작업명은 비울 수 없습니다.'); }
+  }
+  // 계획시작을 종료보다 뒤로 옮기면 일정을 통째로 미루는 뜻으로 봅니다.
+  // 간트에서 막대를 끄는 것과 같게, 기간 길이를 유지한 채 종료도 함께 옮깁니다.
+  let shifted = false;
+  if (patch.start !== undefined && t.start && t.end && t.start > t.end){
+    const span = Math.round(
+      (new Date(before.end + 'T00:00:00') - new Date(before.start + 'T00:00:00')) / 864e5);
+    const e = new Date(t.start + 'T00:00:00');
+    e.setDate(e.getDate() + (isFinite(span) && span >= 0 ? span : 0));
+    const p2 = n => String(n).padStart(2, '0');
+    t.end = `${e.getFullYear()}-${p2(e.getMonth()+1)}-${p2(e.getDate())}`;
+    shifted = true;
+  }
+  // 종료를 시작보다 앞으로 당기는 건 실수일 가능성이 높아 막습니다.
+  if (patch.end !== undefined && t.start && t.end && t.end < t.start){
+    Object.assign(t, before);
+    throw new Error(`계획종료(${patch.end})가 계획시작(${t.start})보다 빠릅니다.`);
+  }
 
   // 진척률 100 이면 완료, 0 이면 미착수로 자동 정리 (사람이 상태를 직접 고른 경우는 존중)
   if (patch.progress !== undefined && patch.status === undefined){
@@ -250,18 +273,21 @@ export async function updateTask(code, patch){
   if (patch.status === 'done') t.progress = 100;
   if (patch.status === 'not_started') t.progress = 0;
   if (patch.start !== undefined || patch.end !== undefined) t.days = bizDays(t.start, t.end);
+  t.shifted = shifted;   // 화면에서 안내하려고 잠깐 표시해 둡니다
 
   if (state.mode === 'supabase'){
     try {
       await sb(`tasks?code=eq.${encodeURIComponent(code)}`, {
         method: 'PATCH',
         body: JSON.stringify({
+          name: t.name,                     // 작업명도 함께 저장합니다
           progress: t.progress, status: t.status,
           owner: t.owner || '',
           plan_start: t.start || null,      // 빈 문자열은 date 컬럼이 거부한다
           plan_end:   t.end   || null
         })
       });
+      recalcParents();                      // 상위 일정은 두 모드 모두에서 다시 계산
     } catch (e){
       Object.assign(t, before);
       throw e;
@@ -359,6 +385,13 @@ export async function applyBulk({ updates = [], adds = [], removes = [], source 
   }
 }
 
+/* 엑셀 반영 뒤 구조가 바뀌었으면 번호를 정리합니다. */
+export async function applyBulkThenRenumber(payload){
+  const r = await applyBulk(payload);
+  r.renumbered = (r.added || r.removed) ? await autoRenumber() : 0;
+  return r;
+}
+
 function cmpCode(a, b){
   const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++){
@@ -418,7 +451,23 @@ async function getProjectId(){
 export async function deleteTasks(codes){
   const removes = state.tasks.filter(t => codes.includes(t.code));
   if (!removes.length) return { removed: 0 };
-  return applyBulk({ removes, source: '삭제' });
+  const r = await applyBulk({ removes, source: '삭제' });
+  r.renumbered = await autoRenumber();
+  return r;
+}
+
+/* 구조가 바뀐 뒤 번호에 빈자리가 있으면 자동으로 메웁니다.
+   L1 단계 번호(2,3,4…)는 이미 공유된 값이라 건드리지 않습니다.
+   실패해도 데이터는 그대로 두고 0 을 돌려줍니다. */
+export async function autoRenumber(){
+  try {
+    const plan = planRenumber(false);
+    if (!plan.changes.length) return 0;
+    await applyRenumber(plan.map);
+    return plan.changes.length;
+  } catch (_) {
+    return 0;
+  }
 }
 
 /* 지웠을 때 함께 사라질 하위 Task 까지 미리 계산한다. */

@@ -272,7 +272,8 @@ function viewDashboard(){
    VIEW 2 — WBS 트리
    ================================================================== */
 const collapsed = new Set();
-const selected = new Set();          // 삭제하려고 고른 WBS 코드
+const selected = new Set();
+let editCell = null;      // { code, field } — 지금 고치고 있는 칸          // 삭제하려고 고른 WBS 코드
 let filter = { q:'', status:'', level:'4' };
 
 function viewTree(){
@@ -367,12 +368,23 @@ function treeRows(){
         <code>${esc(t.code)}</code>
       </div>
       <div class="r-name">
-        <span>${esc(t.name)}</span>
+        ${editCell && editCell.code === t.code && editCell.field === 'name'
+          ? `<input class="input cell-edit" data-edit-name="${esc(t.code)}"
+                    value="${esc(t.name)}" maxlength="120">`
+          : `<span class="cell" data-edit="${esc(t.code)}|name" title="눌러서 수정">${esc(t.name)}</span>`}
         ${t.note ? `<span class="badge b-amber" title="${esc(t.note)}">메모</span>` : ''}
         ${overdue ? `<span class="badge b-rose">초과</span>` : ''}
       </div>
-      <div class="r-date" title="계획시작 ${fmt(t.start)} · ${DATE_SRC[t.dateSource] || ''}">${fmt(t.start)}</div>
-      <div class="r-date" title="계획종료 ${fmt(t.end)} · ${DATE_SRC[t.dateSource] || ''}">${fmt(t.end)}</div>
+      ${['start','end'].map(f => {
+        const label = f === 'start' ? '계획시작' : '계획종료';
+        if (editCell && editCell.code === t.code && editCell.field === f)
+          return `<div class="r-date"><input type="date" class="input cell-edit date"
+                    data-edit-date="${esc(t.code)}|${f}" value="${esc(t[f] || '')}"></div>`;
+        if (t.level !== 4)
+          return `<div class="r-date locked" title="${label} ${fmt(t[f])} · 하위 Task 범위에서 자동 계산">${fmt(t[f])}</div>`;
+        return `<div class="r-date"><span class="cell" data-edit="${esc(t.code)}|${f}"
+                  title="${label} ${fmt(t[f])} · ${DATE_SRC[t.dateSource] || ''} · 눌러서 수정">${fmt(t[f])}</span></div>`;
+      }).join('')}
       <div class="r-prog">
         <div class="bar"><i class="${pr>=100?'full':pr===0?'zero':''}" style="width:${pr}%"></i></div>
         <span class="pct">${pr}%</span>
@@ -1105,6 +1117,44 @@ async function agendaAction(fn, focusNew){
   }
 }
 
+
+/* ==================================================================
+   트리에서 직접 고치기 (작업명 · 계획시작 · 계획종료)
+   ================================================================== */
+function openCell(code, field){
+  editCell = { code, field };
+  $('#rows').innerHTML = treeRows();
+  const el = $('.cell-edit');
+  if (el){ el.focus(); if (el.type !== 'date') el.select(); }
+}
+
+function closeCell(){
+  editCell = null;
+  $('#rows').innerHTML = treeRows();
+  renderSelBar();
+}
+
+async function saveCell(code, field, value){
+  const t = state.tasks.find(x => x.code === code);
+  if (!t){ closeCell(); return; }
+
+  const v = field === 'name' ? String(value).trim() : String(value || '');
+  if (v === (t[field] || '')){ closeCell(); return; }   // 안 바뀌었으면 조용히 닫는다
+
+  try {
+    const saved = await store.updateTask(code, { [field]: v });
+    editCell = null;
+    await refresh();
+    const label = { name:'작업명', start:'계획시작', end:'계획종료' }[field];
+    toast(saved && saved.shifted
+      ? `${code} 일정을 ${fmt(saved.start)} ~ ${fmt(saved.end)} 로 미뤘습니다. (기간 유지)`
+      : `${code} ${label} 저장했습니다.`);
+  } catch (e){
+    toast('저장 실패: ' + e.message, true);
+    closeCell();
+  }
+}
+
 /* ==================================================================
    표에서 삭제
    ================================================================== */
@@ -1184,7 +1234,8 @@ function confirmDelete(){
         selected.clear();
         closePreview();
         await refresh();
-        toast(`${r.removed}건을 지웠습니다.`);
+        toast(`${r.removed}건을 지웠습니다.`
+          + (r.renumbered ? ` 번호 ${r.renumbered}건을 자동으로 정리했습니다.` : ''));
       } catch (e){
         btn.disabled = false; btn.textContent = '다시 시도';
         toast('삭제 실패: ' + e.message, true);
@@ -1358,7 +1409,7 @@ async function applyPending(){
   btn.disabled = true; btn.textContent = '반영 중…';
   try {
     const rowsSnapshot = pending.rows;
-    const r = await store.applyBulk(payload);
+    const r = await store.applyBulkThenRenumber(payload);
 
     // 파일에 적힌 날짜가 그대로 들어갔는지 한 건씩 대조합니다.
     const audit = excel.auditDates(rowsSnapshot, state.tasks);
@@ -1370,6 +1421,7 @@ async function applyPending(){
       toast(`날짜 ${audit.mismatched.length}건이 파일과 다릅니다. 확인해 주세요.`, true);
     } else {
       toast(`반영 완료 — 수정 ${r.updated} · 추가 ${r.added} · 삭제 ${r.removed}`
+        + (r.renumbered ? ` · 번호 ${r.renumbered}건 자동 정리` : '')
         + (audit.checked ? ` · 날짜 ${audit.matched}/${audit.checked} 일치` : ''));
     }
   } catch (e){
@@ -1525,6 +1577,13 @@ function bind(){
       return;
     }
 
+    const cell = e.target.closest('[data-edit]');
+    if (cell){
+      const [code, field] = cell.dataset.edit.split('|');
+      openCell(code, field);
+      return;
+    }
+
     const msBtn = e.target.closest('[data-ms-edit],[data-ms-del]');
     if (msBtn){
       const d = msBtn.dataset;
@@ -1615,6 +1674,11 @@ function bind(){
 
   document.addEventListener('focusout', async e => {
     const t = e.target;
+    if (t.dataset && t.dataset.editName && editCell){
+      const code = t.dataset.editName, v = t.value;
+      setTimeout(() => { if (editCell && editCell.code === code) saveCell(code, 'name', v); }, 120);
+      return;
+    }
     if (t.dataset && t.dataset.agEdit && editingAgenda === t.dataset.agEdit){
       const id = t.dataset.agEdit, v = t.value;
       setTimeout(() => {
@@ -1646,6 +1710,11 @@ function bind(){
     if (t.id === 'calStatus'){ calFilter.status = t.value; await renderView(); return; }
     if (t.id === 'calLevel'){ calFilter.level = t.value; await renderView(); return; }
 
+    if (t.dataset.editDate){
+      const [code, field] = t.dataset.editDate.split('|');
+      await saveCell(code, field, t.value);
+      return;
+    }
     if (t.dataset.status){
       const code = t.dataset.status;
       const patch = { status: t.value };
@@ -1662,6 +1731,18 @@ function bind(){
     if (t.id === 'agNew' && e.key === 'Enter'){
       e.preventDefault();
       if (t.value.trim()) await agendaAction(() => store.addAgenda(t.value), true);
+      return;
+    }
+    const cellKey = t.dataset && (t.dataset.editName || t.dataset.editDate);
+    if (cellKey){
+      if (e.key === 'Enter'){
+        e.preventDefault();
+        const [code, field] = t.dataset.editName
+          ? [t.dataset.editName, 'name'] : t.dataset.editDate.split('|');
+        await saveCell(code, field, t.value);
+      } else if (e.key === 'Escape'){
+        e.preventDefault(); closeCell();
+      }
       return;
     }
     if (t.dataset && t.dataset.agGrip){

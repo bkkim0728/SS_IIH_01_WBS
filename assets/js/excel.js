@@ -62,12 +62,18 @@ const txt = v => String(v ?? '').trim();
 function toDate(v){
   if (v == null || v === '') return '';
   if (v instanceof Date && !isNaN(v)){
+    // 가장 가까운 자정으로 반올림합니다.
+    // 23:27 처럼 자정 직전으로 떨어진 값이 전날로 읽히는 것을 막습니다.
     const p = n => String(n).padStart(2,'0');
-    return `${v.getFullYear()}-${p(v.getMonth()+1)}-${p(v.getDate())}`;
+    const d = new Date(v.getTime());
+    if (d.getHours() >= 12) d.setDate(d.getDate() + 1);
+    d.setHours(0, 0, 0, 0);
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
   }
-  if (typeof v === 'number' && v > 20000 && v < 80000){
-    const d = new Date(Date.UTC(1899,11,30) + v * 864e5);
-    return d.toISOString().slice(0,10);
+  // 엑셀 일련번호. UTC 로만 계산해 어느 시간대에서든 같은 날짜가 나옵니다.
+  if (typeof v === 'number' && isFinite(v) && v > 1 && v < 400000){
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 864e5);
+    return d.toISOString().slice(0, 10);
   }
   const pad = (a, b, c) => `${a}-${String(b).padStart(2,'0')}-${String(c).padStart(2,'0')}`;
   const raw = txt(v);
@@ -259,11 +265,16 @@ export function downloadWorkbook(bytes, filename){
    ================================================================== */
 export async function readWorkbook(file){
   const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf, { type:'array', cellDates:true });
+  // cellDates:false 가 핵심입니다.
+  // SheetJS 는 일련번호를 날짜로 바꿀 때 1899-12-30 시점의 지역 시차를 씁니다.
+  // 한국은 1899년 표준시가 UTC+8:27 이라 오늘(UTC+9:00)과 33분이 어긋나고,
+  // 그 33분 때문에 자정 직전으로 떨어져 날짜가 하루 밀립니다.
+  // 그래서 변환을 맡기지 않고 숫자 그대로 받아 아래 toDate() 에서 UTC 로 계산합니다.
+  const wb = XLSX.read(buf, { type:'array', cellDates:false });
   const name = wb.SheetNames.includes(SHEET) ? SHEET : wb.SheetNames[0];
   if (!name) throw new Error('시트를 찾을 수 없습니다.');
   const ws = wb.Sheets[name];
-  const rows = XLSX.utils.sheet_to_json(ws, { defval:'', raw:true, cellDates:true });
+  const rows = XLSX.utils.sheet_to_json(ws, { defval:'', raw:true, cellDates:false });
   if (!rows.length) throw new Error(`'${name}' 시트에 데이터가 없습니다.`);
   if (!(COLUMNS[0].head in rows[0]))
     throw new Error(`머리글에 '${COLUMNS[0].head}' 열이 없습니다. 앱에서 내려받은 양식을 쓰세요.`);

@@ -224,7 +224,7 @@ function viewDashboard(){
         const pr = rollup(p.code);
         const w  = state.weights[p.code];
         const n  = leavesOf(p.code).length;
-        return `<div class="phase-row">
+        return `<div class="phase-row" style="--phase:${phaseColor(p.code)}">
           <code>${esc(p.code)}</code>
           <div class="pn">${esc(p.name)}
             <small>${fmt(p.start)} → ${fmt(p.end)} · Task ${n}</small>
@@ -356,7 +356,8 @@ function treeRows(){
     const st = STATUS[t.status] || STATUS.not_started;
     const overdue = t.status !== 'done' && D(t.end) && D(t.end) < today;
     return `
-    <div class="row lv${t.level} ${selected.has(t.code)?'picked':''}" data-code="${esc(t.code)}">
+    <div class="row lv${t.level} ${selected.has(t.code)?'picked':''}" data-code="${esc(t.code)}"
+         ${t.level === 1 ? `style="--phase:${phaseColor(t.code)}"` : ''}>
       <div class="r-pick">
         <input type="checkbox" data-pick="${esc(t.code)}" ${selected.has(t.code)?'checked':''}
                aria-label="${esc(t.code)} 고르기">
@@ -385,6 +386,18 @@ function treeRows(){
       <div class="r-days mono">${excel.bizDays(t.start, t.end) || '—'}</div>
     </div>`;
   }).join('');
+}
+
+
+/* L1 단계마다 다른 색.
+   코드가 아니라 순서로 배정해서 번호 정리 뒤에도 그대로 유지됩니다. */
+const PHASE_COLORS = ['#6FA8FF', '#B08CFF', '#46D2C0', '#FFA765', '#F58AB8'];
+
+function phaseColor(code){
+  const top = String(code).split('.')[0];
+  const order = state.tasks.filter(t => t.level === 1).map(t => t.code);
+  const i = order.indexOf(top);
+  return i < 0 ? '' : PHASE_COLORS[i % PHASE_COLORS.length];
 }
 
 /* ==================================================================
@@ -447,7 +460,8 @@ function viewGantt(){
         const cls = blocked ? 'blocked' : pr >= 100 ? 'done' : '';
         const tip = `${t.name} · ${fmt(t.start)} → ${fmt(t.end)} · ${pr}%`
           + (blocked ? ' · 지연 포함' : late ? ' · 종료일 초과 포함' : '');
-        return `<div class="g-row lv${t.level}">
+        const pc = t.level === 1 ? phaseColor(t.code) : '';
+        return `<div class="g-row lv${t.level}" ${pc ? `style="--phase:${pc}"` : ''}>
           <div class="g-label indent-${t.level}">
             <code>${esc(t.code)}</code><span>${esc(t.name)}</span>
             ${blocked ? '<em class="flag rose">지연</em>' : late ? '<em class="flag amber">초과</em>' : ''}
@@ -547,7 +561,7 @@ function viewCalendar(){
     return `
       <button class="cal-bar s-${st} ${b.cutLeft?'cut-l':''} ${b.cutRight?'cut-r':''}"
               data-cal-task="${esc(b.code)}"
-              style="grid-column:${b.from} / ${b.to};grid-row:${b.lane + 2}"
+              style="grid-column:${b.from} / ${b.to};grid-row:${b.lane + 2};--phase:${phaseColor(b.code)}"
               title="${esc(b.code)} ${esc(b.name)}&#10;${fmt(b.start)} → ${fmt(b.end)} · ${pr}%">
         ${b.cutLeft ? '<span class="cb-arrow">◀</span>' : ''}
         <span class="cb-text"><b>${esc(b.code)}</b> ${esc(b.name)}</span>
@@ -570,6 +584,9 @@ function viewCalendar(){
       <option value="">전체 단계</option>
       ${phases.map(p => `<option value="${esc(p.code)}" ${calFilter.phase===p.code?'selected':''}>${esc(p.name)}</option>`).join('')}
     </select>
+    <span class="phase-key">
+      ${phases.map(p => `<i style="background:${phaseColor(p.code)}" title="${esc(p.name)}"></i>`).join('')}
+    </span>
     <select class="input" id="calStatus" style="width:126px">
       <option value="">전체 상태</option>
       ${Object.entries(STATUS).map(([k,v]) => `<option value="${k}" ${calFilter.status===k?'selected':''}>${v.label}</option>`).join('')}

@@ -366,6 +366,14 @@ select.input{ appearance:none; padding-right:28px;
 .g-label .flag.amber{ background:var(--amber-bg); color:var(--amber); }
 .g-row.lv1 .g-label span{ font-weight:700; font-size:13px; }
 .g-row.lv1{ background:rgba(59,111,255,.055); }
+
+/* 단계(L1)마다 다른 글자색. --phase 는 행에 인라인으로 들어옵니다.
+   막대의 상태 색과 헷갈리지 않게 라벨 영역에서만 씁니다. */
+.g-row.lv1[style*="--phase"] .g-label span,
+.g-row.lv1[style*="--phase"] .g-label code{ color:var(--phase); }
+.g-row.lv1[style*="--phase"] .g-label{
+  box-shadow:inset 3px 0 0 var(--phase);
+}
 .g-track{ flex:1; position:relative; height:100%; }
 .g-grid{ position:absolute; inset:0; display:flex; pointer-events:none; }
 .g-grid > i{ border-left:1px solid var(--line-soft); }
@@ -770,3 +778,34 @@ select.input{ appearance:none; padding-right:28px;
   .ms-item .acts{ opacity:1; grid-column:3; }
   .ms-form-grid{ grid-template-columns:1fr 1fr; }
 }
+
+/* ==================================================================
+   단계(L1) 색 — 트리 · 달력 · 대시보드
+   --phase 는 각 요소에 인라인으로 들어옵니다.
+   상태 색(완료 민트 / 지연 로즈 / 진행 블루)과 겹치지 않도록
+   라벨과 테두리에만 쓰고, 막대 채우기는 건드리지 않습니다.
+   ================================================================== */
+
+/* 트리 L1 행 */
+.row.lv1[style*="--phase"]{
+  background:linear-gradient(90deg,
+    color-mix(in srgb, var(--phase) 13%, transparent), transparent 62%);
+  box-shadow:inset 3px 0 0 var(--phase);
+}
+.row.lv1[style*="--phase"] .r-name > span,
+.row.lv1[style*="--phase"] .r-code code{ color:var(--phase); }
+
+/* 달력 막대 — 왼쪽 모서리에 단계 띠 */
+.cal-bar[style*="--phase"]{ border-left:3px solid var(--phase); }
+.cal-bar.cut-l[style*="--phase"]{ border-left-width:0; }
+
+/* 달력 필터 옆 색 안내 */
+.phase-key{ display:inline-flex; align-items:center; gap:4px; padding-left:2px; }
+.phase-key i{ width:9px; height:9px; border-radius:2px; display:inline-block; }
+
+/* 대시보드 단계별 진척 */
+.phase-row[style*="--phase"] > code{ color:var(--phase); font-weight:600; }
+.phase-row[style*="--phase"] .pn{ border-left:3px solid var(--phase); padding-left:9px; }
+.phase-row[style*="--phase"] .bar > i{ background:var(--phase); }
+.phase-row[style*="--phase"] .bar > i.full{ background:var(--mint); }
+.phase-row[style*="--phase"] .bar > i.zero{ background:var(--line); }

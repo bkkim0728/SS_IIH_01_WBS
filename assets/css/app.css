@@ -153,13 +153,32 @@ a{ color:var(--signal-2); }
 .topbar .sub{ font-size:11.5px; color:var(--muted); font-family:var(--mono); }
 .topbar-right{ margin-left:auto; display:flex; align-items:center; gap:20px; }
 
-.ring{ display:flex; align-items:center; gap:11px; }
-.ring svg{ width:44px; height:44px; transform:rotate(-90deg); }
-.ring .track{ fill:none; stroke:var(--line); stroke-width:5; }
-.ring .fill{ fill:none; stroke:url(#ringGrad); stroke-width:5; stroke-linecap:round;
-  transition:stroke-dashoffset .9s var(--ease); }
-.ring b{ display:block; font-size:17px; font-family:var(--mono); letter-spacing:-.03em; }
-.ring span{ display:block; font-size:10.5px; color:var(--muted); }
+/* 전체 진척 — 실적 막대 위에 계획 위치를 표시선으로 얹습니다 */
+.prog{ display:grid; grid-template-columns:auto 1fr; gap:2px 12px;
+  align-items:center; min-width:280px; }
+.prog-num{ grid-row:1 / span 2; text-align:right; }
+.prog-num b{ display:block; font-size:20px; font-family:var(--mono); letter-spacing:-.04em; line-height:1.1; }
+.prog-num span{ display:block; font-size:10.5px; color:var(--muted); }
+
+.prog-bar{ position:relative; height:10px; border-radius:5px;
+  background:var(--panel-3); border:1px solid var(--line); overflow:visible; }
+.prog-bar > i{ display:block; height:100%; border-radius:4px;
+  background:linear-gradient(90deg,var(--signal),var(--mint));
+  transition:width .8s var(--ease); }
+.prog-bar > u{ position:absolute; top:-4px; bottom:-4px; width:2px; z-index:2;
+  background:var(--amber); border-radius:1px; transform:translateX(-1px);
+  transition:left .8s var(--ease); }
+
+.prog-bar::after{                      /* 25 / 50 / 75 눈금 */
+  content:''; position:absolute; inset:0; border-radius:4px; pointer-events:none;
+  background:repeating-linear-gradient(90deg,
+    transparent 0 calc(25% - 1px), rgba(255,255,255,.13) calc(25% - 1px) 25%);
+}
+.prog-legend{ display:flex; gap:12px; font-size:10px; }
+.prog-legend span{ display:inline-flex; align-items:center; gap:4px; color:var(--muted); }
+.prog-legend span::before{ content:''; width:8px; height:8px; border-radius:2px; }
+.prog-legend .lg-actual::before{ background:linear-gradient(90deg,var(--signal),var(--mint)); }
+.prog-legend .lg-plan::before{ background:var(--amber); width:2px; height:10px; border-radius:1px; }
 
 /* --- 마일스톤 스파인 (시그니처) --- */
 .spine{
@@ -545,6 +564,7 @@ select.input{ appearance:none; padding-right:28px;
   .topbar{ flex-wrap:wrap; gap:10px; }
   .topbar h1{ font-size:15px; }
   .topbar-right{ margin-left:0; width:100%; }
+  .prog{ min-width:0; flex:1; }
   /* 스파인은 좁은 화면에서 가로로 넘치므로 자기 안에서만 스크롤되게 한다.
      (컨테이너가 없으면 문서 전체가 가로로 밀린다) */
   .spine{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
@@ -973,4 +993,52 @@ img.sp-photo:hover{ transform:scale(1.35); border-color:var(--signal); z-index:5
   .cv-top{ flex-direction:column; align-items:center; text-align:center; }
   .cv-facts{ width:100%; text-align:left; }
   .cv-item{ grid-template-columns:1fr; gap:3px; }
+}
+
+
+/* 산출근거 — 단계별 진척 아래 작은 설명 */
+.calc-note{
+  margin-top:14px; padding-top:11px; border-top:1px solid var(--line-soft);
+  font-size:11px; line-height:1.65; color:var(--muted);
+}
+.calc-note b{ color:var(--text-2); margin-right:5px; }
+
+/* ==================================================================
+   고객사 TF
+   ================================================================== */
+.tf-table td{ text-align:left; }
+.tf-table td.c-role{ font-weight:600; color:var(--text); min-width:180px; }
+.tf-table td.c-part{ min-width:96px; }
+.tf-table td.c-name{ font-weight:600; min-width:74px; }
+.tf-table td.c-grade{ color:var(--text-2); min-width:62px; }
+.tf-table td.c-dept{ color:var(--text-2); min-width:150px; }
+.tf-table th{ text-align:left; padding-left:12px; }
+
+/* 구분별 색 — 왼쪽 띠로만 구분해 표를 어지럽히지 않습니다.
+   병합으로 첫 칸이 없는 행은 띠를 그리지 않습니다 (담당자 칸에 붙어 보임) */
+.tf-table tbody tr > td.c-role{ box-shadow:inset 3px 0 0 var(--tfc, transparent); }
+.tf-table tbody tr.p0{ --tfc:#6FA8FF; }
+.tf-table tbody tr.p1{ --tfc:#B08CFF; }
+.tf-table tbody tr.p2{ --tfc:#46D2C0; }
+.tf-table tbody tr.p3{ --tfc:#FFA765; }
+.tf-table tbody tr.p4{ --tfc:#F58AB8; }
+.tf-table tbody tr.is-tbd td{ background:rgba(255,178,36,.05); }
+
+.tbd{ display:inline-block; padding:1px 7px; border-radius:5px;
+  background:var(--amber-bg); color:var(--amber); font-size:11px; font-weight:600; }
+
+.tf-depts{ display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr));
+  gap:10px; margin-top:10px; }
+.tf-dept{ padding:11px 13px; border:1px solid var(--line);
+  border-radius:var(--r); background:var(--panel-2); }
+.tf-dept b{ font-size:12.5px; font-weight:600; }
+.tf-dept em{ font-style:normal; font-size:10.5px; color:var(--muted);
+  font-family:var(--mono); margin-left:6px; }
+.tf-members{ display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
+.tf-members > span{ padding:2px 8px; border-radius:5px;
+  background:var(--panel-3); font-size:11.5px; color:var(--text-2); }
+
+@media (max-width:900px){
+  .tf-table td.c-role{ min-width:130px; }
+  .tf-table td.c-dept{ min-width:110px; }
 }

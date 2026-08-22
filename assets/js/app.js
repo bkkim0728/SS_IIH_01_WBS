@@ -6,6 +6,7 @@ import * as excel from './excel.js';
 import * as cal from './calendar.js';
 import { STAFF } from './staff.js';
 import { getResume } from './resume.js';
+import { TF } from './tf.js';
 import { state } from './store.js';
 
 /* ---------- 유틭 ---------- */
@@ -48,6 +49,7 @@ const ICON = {
   trash:'<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/>',
   cal:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
   people:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+  org:'<rect x="9" y="3" width="6" height="5" rx="1"/><rect x="2" y="16" width="6" height="5" rx="1"/><rect x="16" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M5 16v-2h14v2"/>',
   hash:'<path d="M4 9h16M4 15h16M10 3L8 21M16 3l-2 18"/>',
   grip:'<circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/>'
 };
@@ -129,11 +131,33 @@ function statusOf(t){
   return { key, ...STATUS[key], pr, late: lateCount > 0, blockedCount, lateCount, leafCount: leaves.length };
 }
 
+
+/* 단계 비중을 합이 정확히 100 이 되는 정수 백분율로 바꿉니다.
+
+   원본 시트의 전체 비중은 25·40·20·5·5 로 합이 95 입니다.
+   빈 5 는 Task 가 없는 착수 단계 몫이라, 나머지 5개 단계에 비율대로 나눕니다.
+   그냥 반올림하면 99 나 101 이 되므로 최대잔여법으로 남는 1 을
+   소수부가 가장 큰 단계에 줍니다. */
+function weightPercents(codes){
+  const raw = codes.map(c => state.weights[c] || 0);
+  const sum = raw.reduce((a, b) => a + b, 0);
+  if (!sum) return codes.map(() => 0);
+
+  const exact = raw.map(v => v / sum * 100);
+  const floor = exact.map(Math.floor);
+  let left = 100 - floor.reduce((a, b) => a + b, 0);
+
+  const order = exact
+    .map((v, i) => ({ i, frac: v - Math.floor(v) }))
+    .sort((a, b) => b.frac - a.frac);
+  for (let k = 0; k < left; k++) floor[order[k % order.length].i]++;
+  return floor;
+}
+
 /* ---------- 상단 ---------- */
 function renderTop(){
   const p = overall(), pl = planned();
   const drift = p - pl;
-  const c = 2 * Math.PI * 19;
   $('#topbar').innerHTML = `
     <div>
       <h1>${esc(state.project.name)}</h1>
@@ -141,16 +165,16 @@ function renderTop(){
         · ${fmt(state.project.start)} → ${fmt(state.project.end)}</div>
     </div>
     <div class="topbar-right">
-      <div class="ring">
-        <svg viewBox="0 0 44 44">
-          <defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stop-color="#3B6FFF"/><stop offset="1" stop-color="#23D6A0"/>
-          </linearGradient></defs>
-          <circle class="track" cx="22" cy="22" r="19"/>
-          <circle class="fill"  cx="22" cy="22" r="19"
-                  stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - p/100)}"/>
-        </svg>
-        <div><b class="num">${p}%</b><span>실적 · 계획 ${pl}%</span></div>
+      <div class="prog">
+        <div class="prog-num"><b class="num">${p}%</b><span>실적</span></div>
+        <div class="prog-bar" title="실적 ${p}% · 계획 ${pl}%">
+          <i style="width:${clamp(p,0,100)}%"></i>
+          <u style="left:${clamp(pl,0,100)}%"></u>
+        </div>
+        <div class="prog-legend">
+          <span class="lg-actual">실적 ${p}%</span>
+          <span class="lg-plan">계획 ${pl}%</span>
+        </div>
       </div>
       <span class="badge ${drift >= 0 ? 'b-mint' : drift > -8 ? 'b-amber' : 'b-rose'}">
         ${drift >= 0 ? '+' : ''}${drift}%p
@@ -247,9 +271,9 @@ function viewDashboard(){
     <div class="card">
       <h3>단계별 진척</h3>
       <div class="hint" style="margin-bottom:10px">막대는 실적, 오른쪽 숫자는 해당 단계 리프 Task 평균입니다.</div>
-      ${phases.map(p => {
+      ${(() => { const wp = weightPercents(phases.map(x => x.code)); return phases.map((p, pi) => {
         const pr = rollup(p.code);
-        const w  = state.weights[p.code];
+        const w  = wp[pi];
         const n  = leavesOf(p.code).length;
         return `<div class="phase-row" style="--phase:${phaseColor(p.code)}">
           <code>${esc(p.code)}</code>
@@ -259,10 +283,19 @@ function viewDashboard(){
               <i class="${pr >= 100 ? 'full' : pr === 0 ? 'zero' : ''}" style="width:${pr}%"></i>
             </div>
           </div>
-          <div class="pw">비중<br>${Math.round(w * 100)}%</div>
+          <div class="pw">비중<br>${w}%</div>
           <div class="pp">${pr}%</div>
         </div>`;
-      }).join('')}
+      }).join(''); })()}
+      <div class="calc-note">
+        <b>산출근거</b>
+        원본 시트의 전체 비중은 ${phases.map(p => Math.round((state.weights[p.code] || 0) * 100)).join(' · ')}
+        로 합이 ${Math.round(phases.reduce((a, p) => a + (state.weights[p.code] || 0), 0) * 100)} 입니다.
+        남는 ${100 - Math.round(phases.reduce((a, p) => a + (state.weights[p.code] || 0), 0) * 100)}
+        은 Task 가 없는 착수 단계 몫이라, 위 비중은 나머지 ${phases.length}개 단계에 비율대로 나눠
+        합이 100% 가 되게 맞춘 값입니다.
+        전체 진척률도 같은 비중으로 계산합니다.
+      </div>
     </div>
 
     <div style="display:flex;flex-direction:column;gap:14px">
@@ -883,6 +916,81 @@ function openResume(name){
 
       <div class="cv-src mono">출처 · ${esc(cv.file)}</div>`
   });
+}
+
+
+/* ==================================================================
+   VIEW — 고객사 TF
+   업로드해 주신 명단 엑셀을 그대로 옮긴 표입니다.
+   역할·구분 열의 세로 병합(협업총괄 2명, DW 2명)도 살렸습니다.
+   ================================================================== */
+function viewTF(){
+  const rows = TF.rows;
+  const named = rows.filter(r => r.name && r.name !== 'TBD');
+  const tbd = rows.filter(r => r.name === 'TBD');
+  const depts = [...new Set(rows.map(r => r.dept).filter(Boolean))];
+
+  // 구분별로 묶어 색을 준다 (개발PM / 개발PL / UX·UI / 그 외)
+  const partColor = p => /개발PM/.test(p) ? 0 : /개발PL/.test(p) ? 1
+                     : /UX|UI/.test(p) ? 2 : /현업|모니모/.test(p) ? 3 : 4;
+
+  const cell = (r, key, span) => span === 0 ? ''
+    : `<td class="c-${key}" ${span > 1 ? `rowspan="${span}"` : ''}>${esc(r[key])}</td>`;
+
+  return `
+  <div class="view-head">
+    <div><h2>고객사 TF</h2><p>${esc(TF.title)} · ${esc(TF.version)}</p></div>
+  </div>
+
+  <div class="grid g-kpi" style="margin-bottom:16px">
+    <div class="card kpi" style="--accent:#6FA8FF">
+      <div class="k-label">TF 인원</div>
+      <div class="k-value">${rows.length}<small>명</small></div>
+      <div class="k-foot">확정 ${named.length} · 미정 ${tbd.length}</div>
+    </div>
+    <div class="card kpi" style="--accent:#B08CFF">
+      <div class="k-label">참여 부서</div>
+      <div class="k-value">${depts.length}<small>개</small></div>
+      <div class="k-foot">${esc(depts.slice(0,3).join(' · '))}${depts.length > 3 ? ' 외' : ''}</div>
+    </div>
+    <div class="card kpi" style="--accent:${tbd.length ? '#FFA765' : '#23D6A0'}">
+      <div class="k-label">담당자 미정</div>
+      <div class="k-value">${tbd.length}<small>건</small></div>
+      <div class="k-foot">${tbd.length ? esc(tbd.map(r => r.role).join(' · ')) : '전원 확정'}</div>
+    </div>
+  </div>
+
+  <div class="sp-wrap">
+    <table class="sp-table tf-table">
+      <thead><tr>${TF.headers.map((h, i) =>
+        `<th class="c-${['role','part','name','grade','dept'][i]}">${esc(h)}</th>`).join('')}</tr></thead>
+      <tbody>
+        ${rows.map(r => `
+          <tr class="p${partColor(r.part)} ${r.name === 'TBD' ? 'is-tbd' : ''}">
+            ${cell(r, 'role', r.roleSpan)}
+            ${cell(r, 'part', r.partSpan)}
+            <td class="c-name">${r.name === 'TBD'
+              ? '<span class="tbd">미정</span>' : esc(r.name)}</td>
+            <td class="c-grade">${esc(r.grade)}</td>
+            <td class="c-dept">${esc(r.dept)}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>부서별 인원</h3>
+    <div class="tf-depts">
+      ${depts.map(d => {
+        const list = rows.filter(r => r.dept === d);
+        return `<div class="tf-dept">
+          <b>${esc(d)}</b><em>${list.length}명</em>
+          <div class="tf-members">${list.map(r =>
+            r.name === 'TBD' ? '<span class="tbd">미정</span>' : `<span>${esc(r.name)}</span>`).join('')}</div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
 }
 
 /* ==================================================================
@@ -1779,6 +1887,7 @@ const VIEWS = {
   gantt:       { label:'일정 간트', icon:ICON.gantt, render:viewGantt },
   calendar:    { label:'스케줄 달력', icon:ICON.cal,  render:viewCalendar },
   staff:       { label:'투입인력',   icon:ICON.people, render:viewStaff },
+  tf:          { label:'고객사 TF',  icon:ICON.org,    render:viewTF },
   log:         { label:'변경 이력', icon:ICON.hist,  render:viewLog },
   settings:    { label:'설정',      icon:ICON.cog,   render:viewSettings }
 };

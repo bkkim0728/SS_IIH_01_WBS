@@ -27,6 +27,9 @@ services:
       - path: /assets/fonts/*
         name: Cache-Control
         value: public, max-age=31536000, immutable
+      - path: /assets/photos/*
+        name: Cache-Control
+        value: public, max-age=604800
       # CSS/JS/HTML 은 매번 갱신 여부만 확인합니다.
       # (바뀐 스타일이 옛 캐시에 가려지는 것을 막습니다. ETag 로 재검증하므로 가볍습니다.)
       - path: /assets/css/*

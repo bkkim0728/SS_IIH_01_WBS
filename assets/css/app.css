@@ -852,3 +852,78 @@ select.input{ appearance:none; padding-right:28px;
 .cell-edit.date::-webkit-calendar-picker-indicator{
   filter:invert(.7); cursor:pointer; margin-left:2px;
 }
+
+/* ==================================================================
+   투입인력 — 엑셀 양식을 그대로 옮긴 표
+   ================================================================== */
+.sp-tabs{ display:flex; gap:6px; }
+.sp-tab{
+  padding:7px 14px; border:1px solid var(--line); border-radius:var(--r);
+  background:var(--panel-2); color:var(--text-2); font-size:12.5px;
+  transition:.16s var(--ease);
+}
+.sp-tab:hover{ background:var(--panel-3); color:var(--text); }
+.sp-tab.on{ background:var(--signal); border-color:var(--signal); color:#fff; }
+.sp-tab em{ font-style:normal; font-family:var(--mono); font-size:10.5px; opacity:.75; margin-left:4px; }
+
+.sp-wrap{
+  border:1px solid var(--line); border-radius:var(--r-lg);
+  background:var(--panel); overflow:auto; max-width:100%;
+}
+.sp-table{ border-collapse:collapse; width:100%; font-size:12px; white-space:nowrap; }
+.sp-table th, .sp-table td{
+  border-right:1px solid var(--line-soft); border-bottom:1px solid var(--line-soft);
+  padding:7px 9px; text-align:center; vertical-align:middle;
+}
+.sp-table thead th{
+  background:var(--panel-2); color:var(--text-2);
+  font-size:11px; font-weight:600; letter-spacing:.02em;
+  position:sticky; top:0; z-index:3;
+}
+.sp-table thead tr:nth-child(2) th{ top:31px; }
+.sp-table th.sp-gap{ background:var(--panel-2); }
+.sp-table th.sp-phase{ color:#fff; }
+.sp-table th.sp-phase.p0{ background:rgba(111,168,255,.30); }
+.sp-table th.sp-phase.p1{ background:rgba(176,140,255,.30); }
+.sp-table th.sp-phase.p2{ background:rgba(70,210,192,.28); }
+.sp-table th.sp-phase.p3{ background:rgba(255,167,101,.28); }
+
+.sp-table tbody tr:hover td{ background:rgba(59,111,255,.05); }
+.sp-table td.c-role, .sp-table td.c-vendor, .sp-table td.c-part{ text-align:left; }
+.sp-table td.c-note{ text-align:left; white-space:normal; min-width:190px;
+  font-size:11px; color:var(--muted); line-height:1.5; }
+.sp-table td.c-name{ font-weight:600; color:var(--text); }
+.sp-table td.c-phone{ font-size:11px; color:var(--text-2); }
+.sp-table td.c-grade{ font-size:11px; line-height:1.4; }
+.sp-table td.c-total{ font-weight:600; color:var(--signal-2); background:rgba(59,111,255,.06); }
+.sp-table td.c-m{ color:#3E4B62; min-width:34px; }
+.sp-table td.c-m.on{ color:var(--text); background:rgba(59,111,255,.10); font-weight:600; }
+.sp-table td.c-no{ color:var(--muted); font-family:var(--mono); font-size:11px; }
+
+.sp-table tbody tr.sp-empty td{ height:30px; background:rgba(255,255,255,.012); }
+
+.sp-table tfoot td{
+  background:var(--panel-2); font-weight:700; color:var(--text);
+  border-top:2px solid var(--line); position:sticky; bottom:0;
+}
+.sp-table tfoot td.c-total-label{ text-align:left; letter-spacing:.08em; }
+
+/* 사진 자리 */
+.sp-photo{ width:32px; height:32px; border-radius:50%; display:inline-grid;
+  place-items:center; object-fit:cover; object-position:top center; }
+img.sp-photo{ cursor:zoom-in; border:1px solid var(--line);
+  transition:transform .16s var(--ease), border-color .16s; background:var(--panel-3); }
+img.sp-photo:hover{ transform:scale(1.35); border-color:var(--signal); z-index:5; position:relative; }
+.sp-photo.none{
+  background:var(--panel-3); border:1px dashed var(--line);
+  color:var(--muted); font-size:12px; font-weight:600;
+}
+
+.sp-table.sum td.c-vendor{ font-weight:600; color:var(--text); }
+
+@media (max-width:900px){
+  .sp-tabs{ width:100%; }
+  .sp-tab{ flex:1; padding:7px 8px; font-size:12px; }
+  .sp-table{ font-size:11px; }
+  .sp-table th, .sp-table td{ padding:6px 6px; }
+}

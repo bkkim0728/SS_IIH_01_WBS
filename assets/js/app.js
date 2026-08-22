@@ -4,6 +4,7 @@
 import * as store from './store.js';
 import * as excel from './excel.js';
 import * as cal from './calendar.js';
+import { STAFF } from './staff.js';
 import { state } from './store.js';
 
 /* ---------- 유틭 ---------- */
@@ -45,6 +46,7 @@ const ICON = {
   sheet:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/>',
   trash:'<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/>',
   cal:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  people:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
   hash:'<path d="M4 9h16M4 15h16M10 3L8 21M16 3l-2 18"/>',
   grip:'<circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/>'
 };
@@ -685,6 +687,141 @@ function viewCalendar(){
       </div>`).join('')}
     </div>` : ''}
   </div>` : ''}`;
+}
+
+
+/* ==================================================================
+   VIEW — 투입인력
+   업로드해 주신 엑셀 3개 시트를 그대로 옮긴 표입니다.
+   2단 머리글(단계 / M1~M10), TOTAL 행, 업체별 요약까지 같은 모양입니다.
+   ================================================================== */
+let staffTab = 0;
+
+function viewStaff(){
+  const s = STAFF[staffTab] || STAFF[0];
+  if (!s) return `<div class="empty"><b>투입인력 자료가 없습니다</b></div>`;
+  const MC = s.months.length;
+
+  // 2단 머리글 윗줄 — 단계 이름이 놓인 자리를 그대로 살립니다.
+  const top = [];
+  let at = 0;
+  for (const g of s.groups){
+    if (g.at > at) top.push(`<th colspan="${g.at - at}" class="sp-gap"></th>`);
+    top.push(`<th colspan="${g.span}" class="sp-phase p${s.groups.indexOf(g) % 4}">${esc(g.label)}</th>`);
+    at = g.at + g.span;
+  }
+  if (at < MC) top.push(`<th colspan="${MC - at}" class="sp-gap"></th>`);
+
+  const cellNum = v => (v === '' || v == null) ? '' : v;
+  const avatar = r => r.photo
+    ? `<img class="sp-photo" src="${esc(r.photo)}" alt="${esc(r.name)}" loading="lazy"
+           data-photo="${esc(r.photo)}|${esc(r.name)}|${esc(r.vendor)} · ${esc(r.role)}"
+           title="${esc(r.name)} · 눌러서 크게 보기">`
+    : `<span class="sp-photo none" title="사진 미등록">${esc(String(r.name || '?').slice(0,1))}</span>`;
+
+  return `
+  <div class="view-head">
+    <div><h2>투입인력</h2><p>${esc(s.title)}</p></div>
+    <div class="spacer"></div>
+    ${STAFF.length > 1 ? `<div class="sp-tabs">
+      ${STAFF.map((x, i) => `<button class="sp-tab ${i === staffTab ? 'on' : ''}" data-staff="${i}">
+        ${esc(x.sheet)} <em>${x.rows.filter(r => r.name).length}</em></button>`).join('')}
+    </div>` : ''}
+  </div>
+
+  <div class="grid g-kpi" style="margin-bottom:16px">
+    <div class="card kpi" style="--accent:#6FA8FF">
+      <div class="k-label">투입 인원</div>
+      <div class="k-value">${s.rows.filter(r => r.name).length}<small>명</small></div>
+      <div class="k-foot">${[...new Set(s.rows.map(r => r.vendor).filter(Boolean))].join(' · ')}</div>
+    </div>
+    <div class="card kpi" style="--accent:#B08CFF">
+      <div class="k-label">총 투입 M/M</div>
+      <div class="k-value">${cellNum(s.totals.total)}</div>
+      <div class="k-foot">M1 ~ M${MC} 합계</div>
+    </div>
+    <div class="card kpi" style="--accent:#46D2C0">
+      <div class="k-label">최다 투입 월</div>
+      ${(() => {
+        const mx = Math.max(...s.totals.months.map(v => +v || 0));
+        const i = s.totals.months.findIndex(v => (+v || 0) === mx);
+        return `<div class="k-value">M${i + 1}<small> · ${mx}</small></div>
+                <div class="k-foot">이 달에 인원이 가장 몰립니다</div>`;
+      })()}
+    </div>
+  </div>
+
+  <div class="sp-wrap">
+    <table class="sp-table">
+      <thead>
+        <tr>
+          <th rowspan="2" class="c-no">No.</th>
+          <th rowspan="2" class="c-vendor">업체</th>
+          <th rowspan="2" class="c-part">구분</th>
+          <th rowspan="2" class="c-role">담당업무</th>
+          <th rowspan="2" class="c-photo">사진</th>
+          <th rowspan="2" class="c-name">성명</th>
+          <th rowspan="2" class="c-grade">직급</th>
+          <th rowspan="2" class="c-phone">연락처</th>
+          <th rowspan="2" class="c-total">Total</th>
+          ${top.join('')}
+          <th rowspan="2" class="c-note">비 고</th>
+        </tr>
+        <tr>${s.months.map(m => `<th class="c-m">${esc(m)}</th>`).join('')}</tr>
+      </thead>
+      <tbody>
+        ${s.rows.map(r => r.name ? `
+          <tr>
+            <td class="c-no">${cellNum(r.no)}</td>
+            <td class="c-vendor">${esc(r.vendor)}</td>
+            <td class="c-part">${esc(r.part)}</td>
+            <td class="c-role">${esc(r.role)}</td>
+            <td class="c-photo">${avatar(r)}</td>
+            <td class="c-name">${esc(r.name)}</td>
+            <td class="c-grade">${esc(r.grade).replace(/\n/g, '<br>')}</td>
+            <td class="c-phone mono">${esc(r.phone)}</td>
+            <td class="c-total num">${cellNum(r.total)}</td>
+            ${r.months.map(v => `<td class="c-m num ${v !== '' ? 'on' : ''}">${cellNum(v)}</td>`).join('')}
+            <td class="c-note">${esc(r.note).replace(/\n/g, '<br>')}</td>
+          </tr>` : `
+          <tr class="sp-empty">
+            <td class="c-no">${cellNum(r.no)}</td>
+            <td colspan="${8 + MC + 1}"></td>
+          </tr>`).join('')}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="4" class="c-total-label">TOTAL</td>
+          <td colspan="4"></td>
+          <td class="c-total num">${cellNum(s.totals.total)}</td>
+          ${s.totals.months.map(v => `<td class="c-m num">${cellNum(v)}</td>`).join('')}
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  ${s.summary.length ? `
+  <div class="card" style="margin-top:16px">
+    <h3>업체별 요약</h3>
+    <div class="sp-wrap" style="margin-top:10px">
+      <table class="sp-table sum">
+        <thead><tr>
+          <th class="c-vendor">업체</th><th class="c-total">Total</th>
+          ${s.months.map(m => `<th class="c-m">${esc(m)}</th>`).join('')}
+        </tr></thead>
+        <tbody>
+          ${s.summary.map(v => `<tr>
+            <td class="c-vendor">${esc(v.vendor)}</td>
+            <td class="c-total num">${cellNum(v.total)}</td>
+            ${v.months.map(x => `<td class="c-m num ${(+x || 0) ? 'on' : ''}">${cellNum(x)}</td>`).join('')}
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>` : ''}
+
+`;
 }
 
 /* ==================================================================
@@ -1577,6 +1714,7 @@ const VIEWS = {
   tree:        { label:'WBS 트리',  icon:ICON.tree,  render:viewTree },
   gantt:       { label:'일정 간트', icon:ICON.gantt, render:viewGantt },
   calendar:    { label:'스케줄 달력', icon:ICON.cal,  render:viewCalendar },
+  staff:       { label:'투입인력',   icon:ICON.people, render:viewStaff },
   log:         { label:'변경 이력', icon:ICON.hist,  render:viewLog },
   settings:    { label:'설정',      icon:ICON.cog,   render:viewSettings }
 };
@@ -1659,6 +1797,22 @@ function bind(){
         const inp = $('.ag-input'); if (inp){ inp.focus(); inp.select(); } return; }
       if (d.agDel){ await agendaAction(() => store.deleteAgenda(d.agDel)); return; }
     }
+
+    const ph = e.target.closest('[data-photo]');
+    if (ph){
+      const [src, name, sub] = ph.dataset.photo.split('|');
+      openModal({
+        title: name, sub,
+        applyLabel: '닫기', onApply: null,
+        body: `<div style="text-align:center"><img src="${esc(src)}" alt="${esc(name)}"
+                 style="width:220px;height:220px;border-radius:14px;object-fit:cover;
+                        box-shadow:var(--shadow)"></div>`
+      });
+      return;
+    }
+
+    const stab = e.target.closest('[data-staff]');
+    if (stab){ staffTab = +stab.dataset.staff; await renderView(); return; }
 
     const id = e.target.closest('button')?.id;
     if (!id) return;

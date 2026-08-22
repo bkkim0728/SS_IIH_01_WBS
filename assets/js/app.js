@@ -34,7 +34,8 @@ const ICON = {
   chev:'<path d="M9 6l6 6-6 6"/>',
   up:'<path d="M12 21V8M6 12l6-6 6 6M4 3h16"/>',
   sheet:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/>',
-  trash:'<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/>'
+  trash:'<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/>',
+  grip:'<circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/>'
 };
 const svg = (d, w = 18) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
@@ -228,11 +229,13 @@ function viewDashboard(){
         })()}
       </div>
 
-      <div class="card">
+      <div class="card" id="agendaCard">
         <h3>공유 안건</h3>
-        <div class="hint" style="margin-bottom:6px">원본 시트 상단에 적힌 논의 항목입니다.</div>
-        <ul class="agenda">${state.agenda.map(a =>
-          `<li>${esc(a.replace(/^\d+\.\s*/, ''))}</li>`).join('')}</ul>
+        <div class="hint" style="margin-bottom:6px">
+          항목을 눌러 고치고, 엔터로 저장합니다.
+          ${state.agendaLocal ? '이 브라우저에만 저장됩니다.' : '팀 전체가 함께 봅니다.'}
+        </div>
+        <div id="agendaBody">${agendaList()}</div>
       </div>
     </div>
   </div>`;
@@ -561,6 +564,137 @@ function exportJson(){
 }
 
 
+
+
+/* ==================================================================
+   공유 안건
+   ================================================================== */
+let editingAgenda = null;
+
+function agendaList(){
+  const items = state.agenda;
+  return `
+    <ul class="agenda">
+      ${items.length ? items.map((a, i) => a.id === editingAgenda ? `
+        <li class="editing">
+          <span class="n">${String(i + 1).padStart(2, '0')}</span>
+          <span class="ag-grip ghost">${svg(ICON.grip, 13)}</span>
+          <input class="input ag-input" data-ag-edit="${esc(a.id)}"
+                 value="${esc(a.text)}" maxlength="200">
+        </li>` : `
+        <li data-ag-row="${esc(a.id)}">
+          <button class="ag-grip" data-ag-grip="${esc(a.id)}"
+                  aria-label="${esc(a.text)} 순서 바꾸기"
+                  title="끌어서 순서 바꾸기 (방향키도 됩니다)">${svg(ICON.grip, 13)}</button>
+          <span class="n">${String(i + 1).padStart(2, '0')}</span>
+          <span class="t" data-ag-open="${esc(a.id)}" title="눌러서 수정">${esc(a.text)}</span>
+          <span class="acts">
+            <button class="ag-btn del" data-ag-del="${esc(a.id)}" title="삭제">${svg(ICON.trash, 12)}</button>
+          </span>
+        </li>`).join('') : `<li class="none">등록된 안건이 없습니다.</li>`}
+    </ul>
+    <div class="ag-add">
+      <input class="input" id="agNew" placeholder="새 안건을 적고 엔터" maxlength="200">
+      <button class="btn" id="agAdd">추가</button>
+    </div>`;
+}
+
+
+/* ---------- 안건 끌어서 순서 바꾸기 ----------
+   마우스와 터치를 함께 다루려고 포인터 이벤트를 씁니다.
+   끄는 동안에는 화면에서 바로 자리를 옮겨 보여주고,
+   손을 뗄 때 한 번만 저장합니다. */
+let drag = null;
+
+function agendaRows(){
+  return [...$$('#agendaBody .agenda li[data-ag-row]')];
+}
+
+function startAgendaDrag(e){
+  const grip = e.target.closest('[data-ag-grip]');
+  if (!grip || editingAgenda) return;
+  const li = grip.closest('li');
+  if (!li) return;
+
+  e.preventDefault();
+  drag = { id: grip.dataset.agGrip, li, from: agendaRows().indexOf(li), moved: false };
+  li.classList.add('dragging');
+  $('#agendaBody')?.classList.add('dragging-on');
+  try { grip.setPointerCapture(e.pointerId); } catch (_) {}
+  drag.grip = grip;
+  drag.pointerId = e.pointerId;
+}
+
+function moveAgendaDrag(e){
+  if (!drag) return;
+  e.preventDefault();
+  const rows = agendaRows().filter(r => r !== drag.li);
+  const y = e.clientY;
+
+  // 포인터보다 아래에 있는 첫 항목 앞에 끼워 넣는다
+  const after = rows.find(r => {
+    const b = r.getBoundingClientRect();
+    return y < b.top + b.height / 2;
+  });
+  const ul = drag.li.parentElement;
+  if (after) ul.insertBefore(drag.li, after);
+  else {
+    const last = rows[rows.length - 1];
+    if (last) last.after(drag.li); else ul.appendChild(drag.li);
+  }
+  drag.moved = true;
+  renumberAgenda();
+}
+
+function renumberAgenda(){
+  agendaRows().forEach((r, i) => {
+    const n = r.querySelector('.n');
+    if (n) n.textContent = String(i + 1).padStart(2, '0');
+  });
+}
+
+async function endAgendaDrag(){
+  if (!drag) return;
+  const { id, li, from, moved } = drag;
+  li.classList.remove('dragging');
+  $('#agendaBody')?.classList.remove('dragging-on');
+  const to = agendaRows().indexOf(li);
+  drag = null;
+
+  if (!moved || to < 0 || to === from){ paintAgenda(); return; }
+  try {
+    await store.reorderAgenda(id, to);
+  } catch (e){
+    toast('순서 저장 실패: ' + e.message, true);
+  }
+  paintAgenda();
+}
+
+/* 손잡이에 포커스를 두고 방향키로도 옮길 수 있게 한다 */
+async function nudgeAgenda(id, dir){
+  const i = state.agenda.findIndex(a => a.id === id);
+  if (i < 0) return;
+  try { await store.reorderAgenda(id, i + dir); } catch (e){ toast('순서 저장 실패: ' + e.message, true); }
+  paintAgenda();
+  const g = $(`[data-ag-grip="${CSS.escape(id)}"]`);
+  if (g) g.focus();
+}
+
+function paintAgenda(){
+  const box = $('#agendaBody');
+  if (box) box.innerHTML = agendaList();
+}
+
+async function agendaAction(fn, focusNew){
+  try {
+    await fn();
+    editingAgenda = null;
+    paintAgenda();
+    if (focusNew) $('#agNew')?.focus();
+  } catch (e){
+    toast('안건 저장 실패: ' + e.message, true);
+  }
+}
 
 /* ==================================================================
    표에서 삭제
@@ -923,6 +1057,11 @@ async function renderView(){
 async function refresh(){ renderTop(); renderSpine(); renderNav(); await renderView(); }
 
 function bind(){
+  document.addEventListener('pointerdown', startAgendaDrag);
+  document.addEventListener('pointermove', moveAgendaDrag, { passive:false });
+  document.addEventListener('pointerup', endAgendaDrag);
+  document.addEventListener('pointercancel', endAgendaDrag);
+
   document.addEventListener('click', async e => {
     const nav = e.target.closest('[data-view]');
     if (nav){
@@ -941,6 +1080,14 @@ function bind(){
       return;
     }
 
+    const ag = e.target.closest('[data-ag-open],[data-ag-del]');
+    if (ag){
+      const d = ag.dataset;
+      if (d.agOpen){ editingAgenda = d.agOpen; paintAgenda();
+        const inp = $('.ag-input'); if (inp){ inp.focus(); inp.select(); } return; }
+      if (d.agDel){ await agendaAction(() => store.deleteAgenda(d.agDel)); return; }
+    }
+
     const id = e.target.closest('button')?.id;
     if (!id) return;
     if (id === 'pickClear'){ selected.clear(); $('#rows').innerHTML = treeRows(); renderSelBar(); return; }
@@ -953,6 +1100,11 @@ function bind(){
     }
     if (id === 'exportXlsx' || id === 'expXlsx') await exportXlsx();
     if (id === 'importXlsx' || id === 'impXlsx') $('#xlsxFile')?.click();
+    if (id === 'agAdd'){
+      const v = $('#agNew')?.value;
+      if (v && v.trim()) await agendaAction(() => store.addAgenda(v), true);
+      return;
+    }
     if (id === 'writeTest') await runWriteTest();
     if (id === 'modalClose' || id === 'modalCancel') closePreview();
     if (id === 'modalApply' && modalAction) await modalAction();
@@ -981,6 +1133,16 @@ function bind(){
   document.addEventListener('input', async e => {
     const t = e.target;
     if (t.id === 'q'){ filter.q = t.value; $('#rows').innerHTML = treeRows(); renderSelBar(); return; }
+  });
+
+  document.addEventListener('focusout', async e => {
+    const t = e.target;
+    if (t.dataset && t.dataset.agEdit && editingAgenda === t.dataset.agEdit){
+      const id = t.dataset.agEdit, v = t.value;
+      setTimeout(() => {
+        if (editingAgenda === id) agendaAction(() => store.updateAgenda(id, v));
+      }, 120);   // 삭제 버튼 클릭이 먼저 처리되도록 잠깐 기다린다
+    }
   });
 
   document.addEventListener('change', async e => {
@@ -1013,7 +1175,26 @@ function bind(){
     }
   });
 
-  document.addEventListener('keydown', e => {
+  document.addEventListener('keydown', async e => {
+    const t = e.target;
+    if (t.id === 'agNew' && e.key === 'Enter'){
+      e.preventDefault();
+      if (t.value.trim()) await agendaAction(() => store.addAgenda(t.value), true);
+      return;
+    }
+    if (t.dataset && t.dataset.agGrip){
+      if (e.key === 'ArrowUp'){ e.preventDefault(); await nudgeAgenda(t.dataset.agGrip, -1); return; }
+      if (e.key === 'ArrowDown'){ e.preventDefault(); await nudgeAgenda(t.dataset.agGrip, 1); return; }
+    }
+    if (t.dataset && t.dataset.agEdit){
+      if (e.key === 'Enter'){
+        e.preventDefault();
+        await agendaAction(() => store.updateAgenda(t.dataset.agEdit, t.value));
+      } else if (e.key === 'Escape'){
+        e.preventDefault(); editingAgenda = null; paintAgenda();
+      }
+      return;
+    }
     if (e.key === 'Escape' && $('#modal').classList.contains('on')){ closePreview(); return; }
     if (e.key === '/' && document.activeElement.tagName !== 'INPUT'){
       const q = $('#q'); if (q){ e.preventDefault(); q.focus(); }

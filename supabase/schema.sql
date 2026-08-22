@@ -109,6 +109,20 @@ create trigger tasks_change_log
   for each row execute function log_task_change();
 
 -- ---------------------------------------------------------------------
+-- 4-b. 공유 안건 (진척 현황 화면)
+-- ---------------------------------------------------------------------
+create table agenda (
+  id           uuid primary key default gen_random_uuid(),
+  project_code text not null,
+  text         text not null,
+  sort_order   smallint default 0,
+  created_at   timestamptz default now(),
+  updated_at   timestamptz default now()
+);
+
+create index agenda_project_idx on agenda (project_code, sort_order);
+
+-- ---------------------------------------------------------------------
 -- 5. 진척 롤업 뷰 (L4 리프의 평균을 상위 레벨로 올림)
 -- ---------------------------------------------------------------------
 create view v_task_rollup as
@@ -143,12 +157,14 @@ alter table projects   enable row level security;
 alter table tasks      enable row level security;
 alter table milestones enable row level security;
 alter table task_log   enable row level security;
+alter table agenda     enable row level security;
 
 -- --- A안: 링크를 아는 사람은 보고 고칠 수 있음 -----------------------
 create policy "read all"   on projects   for select using (true);
 create policy "read all"   on tasks      for select using (true);
 create policy "read all"   on milestones for select using (true);
 create policy "read all"   on task_log   for select using (true);
+create policy "read all"   on agenda     for select using (true);
 
 create policy "write all"  on tasks      for update using (true) with check (true);
 create policy "write all"  on milestones for update using (true) with check (true);
@@ -159,6 +175,11 @@ create policy "delete tasks" on tasks    for delete using (true);
 
 -- 트리거가 남기는 로그. security definer 와 별개로 한 겹 더 열어 둡니다.
 create policy "insert log"   on task_log for insert with check (true);
+
+-- 공유 안건은 등록·수정·삭제가 모두 필요합니다.
+create policy "insert agenda" on agenda   for insert with check (true);
+create policy "update agenda" on agenda   for update using (true) with check (true);
+create policy "delete agenda" on agenda   for delete using (true);
 
 -- --- B안: 로그인한 사람만 수정 (A안 write 정책을 먼저 drop) ----------
 -- drop policy "write all" on tasks;
@@ -182,6 +203,7 @@ grant select, insert, update, delete on tasks      to anon, authenticated;
 grant select, update                 on milestones to anon, authenticated;
 grant select                         on projects   to anon, authenticated;
 grant select, insert                 on task_log   to anon, authenticated;
+grant select, insert, update, delete on agenda     to anon, authenticated;
 grant usage, select on all sequences in schema public to anon, authenticated;
 
 -- ---------------------------------------------------------------------

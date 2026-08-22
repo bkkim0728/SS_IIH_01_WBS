@@ -9,6 +9,7 @@ import { bizDays } from './excel.js';
 const CFG_KEY  = 'wbshub.config';
 const DATA_KEY = 'wbshub.tasks.' + PROJECT.code;
 const LOG_KEY  = 'wbshub.log.' + PROJECT.code;
+const AGENDA_KEY = 'wbshub.agenda.' + PROJECT.code;
 
 /* --- 설정 --------------------------------------------------------- */
 
@@ -176,7 +177,8 @@ export const state = {
   mode: 'local',        // 'supabase' | 'local'
   project: { ...PROJECT },
   milestones: MILESTONES.map(m => ({ ...m })),
-  agenda: [...AGENDA],
+  agenda: [],
+  agendaLocal: true,      // Supabase 에 agenda 테이블이 없으면 브라우저에 저장
   weights: PHASE_WEIGHT,
   tasks: [],
   error: null
@@ -207,6 +209,7 @@ export async function load(){
           dateSource: r.date_source || 'auto', note: r.note || ''
         }));
         recalcParents();
+        await loadAgenda();
         if (ms && ms.length) state.milestones = ms.map(m => ({
           name: m.name, start: m.start_date, end: m.end_date,
           note: m.note || '', adjusted: /보정/.test(m.note || '')
@@ -221,6 +224,7 @@ export async function load(){
   state.mode = 'local';
   state.tasks = localTasks();
   recalcParents();
+  await loadAgenda();
   return state;
 }
 
@@ -440,4 +444,132 @@ export function recalcParents(){
       t.dateSource = 'rollup';
     }
   }
+}
+
+
+/* ==================================================================
+   공유 안건
+   Supabase 에 agenda 테이블이 있으면 팀 공용, 없으면 브라우저에 저장합니다.
+   (테이블이 없어도 앱이 멈추지 않게 조용히 내려앉습니다)
+   ================================================================== */
+const newId = () => 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+function seedAgenda(){
+  return AGENDA.map((t, i) => ({
+    id: 'seed' + (i + 1),
+    text: String(t).replace(/^\s*\d+[.)]\s*/, '').trim(),
+    order: i
+  }));
+}
+
+function localAgenda(){
+  try {
+    const a = JSON.parse(localStorage.getItem(AGENDA_KEY) || 'null');
+    if (Array.isArray(a)) return a;
+  } catch (_) {}
+  return seedAgenda();
+}
+
+function saveLocalAgenda(){
+  localStorage.setItem(AGENDA_KEY, JSON.stringify(state.agenda));
+}
+
+export async function loadAgenda(){
+  if (getConfig() && state.mode === 'supabase'){
+    try {
+      const rows = await sb('agenda?select=*&order=sort_order.asc');
+      if (Array.isArray(rows)){
+        state.agendaLocal = false;
+        state.agenda = rows.map(r => ({ id: r.id, text: r.text, order: r.sort_order }));
+        return state.agenda;
+      }
+    } catch (_) {
+      // 테이블이 아직 없는 경우. 브라우저 저장으로 계속 갑니다.
+    }
+  }
+  state.agendaLocal = true;
+  state.agenda = localAgenda();
+  return state.agenda;
+}
+
+export async function addAgenda(text){
+  const t = String(text || '').trim();
+  if (!t) return null;
+  const order = state.agenda.reduce((m, a) => Math.max(m, a.order ?? 0), -1) + 1;
+
+  if (!state.agendaLocal){
+    const rows = await sb('agenda', {
+      method: 'POST',
+      body: JSON.stringify({ project_code: PROJECT.code, text: t, sort_order: order })
+    });
+    const r = rows && rows[0];
+    const item = { id: r ? r.id : newId(), text: t, order };
+    state.agenda.push(item);
+    return item;
+  }
+  const item = { id: newId(), text: t, order };
+  state.agenda.push(item);
+  saveLocalAgenda();
+  return item;
+}
+
+export async function updateAgenda(id, text){
+  const t = String(text || '').trim();
+  const item = state.agenda.find(a => a.id === id);
+  if (!item) return null;
+  if (!t) return deleteAgenda(id);          // 내용을 비우면 삭제로 본다
+  const before = item.text;
+  item.text = t;
+  try {
+    if (!state.agendaLocal){
+      await sb(`agenda?id=eq.${encodeURIComponent(id)}`,
+               { method:'PATCH', body: JSON.stringify({ text: t }) });
+    } else saveLocalAgenda();
+  } catch (e){ item.text = before; throw e; }
+  return item;
+}
+
+export async function deleteAgenda(id){
+  const i = state.agenda.findIndex(a => a.id === id);
+  if (i < 0) return false;
+  const [removed] = state.agenda.splice(i, 1);
+  try {
+    if (!state.agendaLocal){
+      await sb(`agenda?id=eq.${encodeURIComponent(id)}`, { method:'DELETE' });
+    } else saveLocalAgenda();
+  } catch (e){ state.agenda.splice(i, 0, removed); throw e; }
+  return true;
+}
+
+/* 안건을 원하는 자리로 옮긴다. 실패하면 원래 순서로 되돌린다. */
+export async function reorderAgenda(id, toIndex){
+  const from = state.agenda.findIndex(a => a.id === id);
+  if (from < 0) return false;
+  const to = Math.max(0, Math.min(state.agenda.length - 1, toIndex));
+  if (from === to) return false;
+
+  const snapshot = state.agenda.map(a => ({ ...a }));
+  const [item] = state.agenda.splice(from, 1);
+  state.agenda.splice(to, 0, item);
+
+  const changed = [];
+  state.agenda.forEach((a, k) => { if (a.order !== k){ a.order = k; changed.push(a); } });
+
+  try {
+    if (!state.agendaLocal){
+      for (const a of changed){
+        await sb(`agenda?id=eq.${encodeURIComponent(a.id)}`,
+                 { method:'PATCH', body: JSON.stringify({ sort_order: a.order }) });
+      }
+    } else saveLocalAgenda();
+  } catch (e){
+    state.agenda = snapshot;
+    throw e;
+  }
+  return true;
+}
+
+export function resetAgenda(){
+  localStorage.removeItem(AGENDA_KEY);
+  state.agenda = seedAgenda();
 }
